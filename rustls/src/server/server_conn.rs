@@ -695,7 +695,7 @@ mod connection {
     /// # Example
     ///
     /// ```no_run
-    /// # #[cfg(feature = "aws_lc_rs")] {
+    /// # #[cfg(feature = "aws_lc_rs")]
     /// # fn choose_server_config(
     /// #     _: rustls::server::ClientHello,
     /// # ) -> std::sync::Arc<rustls::ServerConfig> {
@@ -720,10 +720,8 @@ mod connection {
     ///     let conn = accepted
     ///         .into_connection(config)
     ///         .unwrap();
-
     ///     // Proceed with handling the ServerConnection.
     /// }
-    /// # }
     /// # }
     /// ```
     pub struct Acceptor {
