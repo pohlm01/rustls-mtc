@@ -313,6 +313,7 @@ impl ExpectClientHello {
             .retain(|scheme| suites::compatible_sigscheme_for_suites(*scheme, &client_suites));
 
         // Choose a certificate.
+        // TODO @max: probably, we want to optionally choose the MTC certificates here
         let certkey = {
             let client_hello = ClientHello::new(
                 &cx.data.sni,

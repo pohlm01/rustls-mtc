@@ -310,6 +310,43 @@ mod sni_resolver {
 #[cfg(any(feature = "std", feature = "hashbrown"))]
 pub use sni_resolver::ResolvesServerCertUsingSni;
 
+
+#[cfg(any(feature = "std", feature = "hashbrown"))]
+mod mtc_resolver {
+    use alloc::sync::Arc;
+    use core::fmt::{Debug, Formatter};
+    use crate::hash_map::HashMap;
+    use crate::msgs::handshake::MtcTrustAnchor;
+    use crate::server;
+    use crate::server::{ClientHello, ResolvesServerCertUsingSni};
+    use crate::sign::{CertifiedKey, SigningKey};
+
+    #[derive(Debug)]
+    pub struct ResolvesServerCertUsingMtcOrX509Sni {
+        x509fallback: ResolvesServerCertUsingSni,
+        by_trust_anchor: HashMap<MtcTrustAnchor, Arc<dyn SigningKey>>
+    }
+
+    impl ResolvesServerCertUsingMtcOrX509Sni {
+        pub fn new() -> Self {
+            Self {
+                x509fallback: ResolvesServerCertUsingSni::new(),
+                by_trust_anchor: HashMap::new(),
+            }
+        }
+    }
+
+    impl server::ResolvesServerCert for ResolvesServerCertUsingMtcOrX509Sni {
+        fn resolve(&self, client_hello: ClientHello) -> Option<Arc<CertifiedKey>> {
+            // @max
+            todo!()
+        }
+    }
+}
+
+#[cfg(any(feature = "std", feature = "hashbrown"))]
+pub use mtc_resolver::ResolvesServerCertUsingMtcOrX509Sni;
+
 #[cfg(test)]
 mod tests {
     use std::vec;

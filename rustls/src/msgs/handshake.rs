@@ -3,10 +3,10 @@ use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::ops::Deref;
 use core::{fmt, iter};
+use core::ops::Deref;
 
-use pki_types::{CertificateDer, DnsName};
+use pki_types::{CertificateDer, DnsName, TrustAnchor};
 
 #[cfg(feature = "tls12")]
 use crate::crypto::ActiveKeyExchange;
@@ -22,11 +22,7 @@ use crate::ffdhe_groups::FfdheGroup;
 use crate::log::warn;
 use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
 use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, TlsListElement};
-use crate::msgs::enums::{
-    CertificateStatusType, ClientCertificateType, Compression, ECCurveType, ECPointFormat,
-    EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup,
-    PSKKeyExchangeMode, ServerNameType,
-};
+use crate::msgs::enums::{BikeshedProofType, CertificateStatusType, CertificateType, ClaimType, ClientCertificateType, Compression, ECCurveType, EchVersion, ECPointFormat, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType, SubjectType};
 use crate::rand;
 use crate::verify::DigitallySignedStruct;
 use crate::x509::wrap_in_sequence;
@@ -36,7 +32,7 @@ use crate::x509::wrap_in_sequence;
 /// This is used to create newtypes for the various TLS message types which is used to wrap
 /// the `PayloadU8` or `PayloadU16` types. This is typically used for types where we don't need
 /// anything other than access to the underlying bytes.
-macro_rules! wrapped_payload(
+macro_rules! wrapped_payload (
   ($(#[$comment:meta])* $vis:vis struct $name:ident, $inner:ident,) => {
     $(#[$comment])*
     #[derive(Clone, Debug)]
@@ -560,8 +556,18 @@ pub enum ClientExtension {
     EarlyData,
     CertificateCompressionAlgorithms(Vec<CertificateCompressionAlgorithm>),
     EncryptedClientHello(EncryptedClientHello),
+
+    // RFC 7250 (Raw Public Keys)
+    ServerCertificateType(Vec<CertificateType>),
+    ClientCertificateType(Vec<CertificateType>),
+
     Unknown(UnknownExtension),
 }
+
+impl TlsListElement for CertificateType {
+    const SIZE_LEN: ListLength = ListLength::U8;
+}
+
 
 impl ClientExtension {
     pub(crate) fn ext_type(&self) -> ExtensionType {
@@ -584,6 +590,8 @@ impl ClientExtension {
             Self::EarlyData => ExtensionType::EarlyData,
             Self::CertificateCompressionAlgorithms(_) => ExtensionType::CompressCertificate,
             Self::EncryptedClientHello(_) => ExtensionType::EncryptedClientHello,
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -615,6 +623,7 @@ impl Codec<'_> for ClientExtension {
             }
             Self::CertificateCompressionAlgorithms(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -658,6 +667,8 @@ impl Codec<'_> for ClientExtension {
             ExtensionType::CompressCertificate => {
                 Self::CertificateCompressionAlgorithms(Vec::read(&mut sub)?)
             }
+            ExtensionType::ServerCertificateType => Self::ServerCertificateType(Vec::read(&mut sub)?),
+            ExtensionType::ClientCertificateType => Self::ClientCertificateType(Vec::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -715,6 +726,11 @@ pub enum ServerExtension {
     TransportParametersDraft(Vec<u8>),
     EarlyData,
     EncryptedClientHello(ServerEncryptedClientHello),
+
+    // RFC 7250 (Raw Public Keys)
+    ServerCertificateType(CertificateType),
+    ClientCertificateType(CertificateType),
+    
     Unknown(UnknownExtension),
 }
 
@@ -735,6 +751,8 @@ impl ServerExtension {
             Self::TransportParametersDraft(_) => ExtensionType::TransportParametersDraft,
             Self::EarlyData => ExtensionType::EarlyData,
             Self::EncryptedClientHello(_) => ExtensionType::EncryptedClientHello,
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -761,6 +779,7 @@ impl Codec<'_> for ServerExtension {
                 nested.buf.extend_from_slice(r);
             }
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -791,6 +810,8 @@ impl Codec<'_> for ServerExtension {
             ExtensionType::EncryptedClientHello => {
                 Self::EncryptedClientHello(ServerEncryptedClientHello::read(&mut sub)?)
             }
+            ExtensionType::ServerCertificateType => Self::ServerCertificateType(CertificateType::read(&mut sub)?),
+            ExtensionType::ClientCertificateType => Self::ClientCertificateType(CertificateType::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -899,12 +920,12 @@ impl ClientHelloPayload {
             //
             // [RFC6066]: https://datatracker.ietf.org/doc/html/rfc6066#section-3
             ClientExtension::ServerName(ref req)
-                if !req
-                    .iter()
-                    .any(|name| matches!(name.payload, ServerNamePayload::IpAddress(_))) =>
-            {
-                Some(req)
-            }
+            if !req
+                .iter()
+                .any(|name| matches!(name.payload, ServerNamePayload::IpAddress(_))) =>
+                {
+                    Some(req)
+                }
             _ => None,
         }
     }
@@ -1455,13 +1476,125 @@ impl<'a> TlsListElement for CertificateExtension<'a> {
     const SIZE_LEN: ListLength = ListLength::U16;
 }
 
+
 #[derive(Debug)]
-pub(crate) struct CertificateEntry<'a> {
-    pub(crate) cert: CertificateDer<'a>,
-    pub(crate) exts: Vec<CertificateExtension<'a>>,
+pub(crate) struct BikeshedCertificate {
+    assertion: Assertion,
+    proof: Proof,
+}
+
+impl Codec<'_> for BikeshedCertificate {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.assertion.encode(bytes);
+        self.proof.encode(bytes);
+    }
+
+    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        todo!("@max")
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct MtcTrustAnchor {
+    proof_type: BikeshedProofType,
+    data: PayloadU8,
+}
+
+impl Codec<'_> for MtcTrustAnchor {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.proof_type.encode(bytes);
+        self.data.encode(bytes);
+    }
+
+    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        todo!("@max")
+    }
+}
+
+#[derive(Debug)]
+struct Proof {
+    trust_anchor: MtcTrustAnchor,
+    proof_data: PayloadU16,
+}
+
+impl Codec<'_> for Proof {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.trust_anchor.encode(bytes);
+        self.proof_data.encode(bytes);
+    }
+
+    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        todo!("@max")
+    }
+}
+
+#[derive(Debug)]
+struct Assertion {
+    subject_type: SubjectType,
+    subject_info: PayloadU16,
+    claims: Vec<Claim>,
+}
+
+impl Codec<'_> for Assertion {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.subject_type.encode(bytes);
+        self.subject_info.encode(bytes);
+        self.claims.encode(bytes);
+    }
+
+    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+struct Claim {
+    claim_type: ClaimType,
+    claim_info: PayloadU16,
+}
+
+impl Codec<'_> for Claim {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.claim_type.encode(bytes);
+        self.claim_info.encode(bytes);
+    }
+
+    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        todo!()
+    }
+}
+
+impl TlsListElement for Claim {
+    const SIZE_LEN: ListLength = ListLength::U16;
+}
+
+
+#[derive(Debug)]
+pub(crate) enum CertificateEntry<'a> {
+    X509(X509CertificateEntry<'a>),
+    Bikeshed(BikeshedCertificate),
+}
+
+impl<'a> TlsListElement for CertificateEntry<'a> {
+    const SIZE_LEN: ListLength = ListLength::U24 {
+        max: CERTIFICATE_MAX_SIZE_LIMIT,
+    };
 }
 
 impl<'a> Codec<'a> for CertificateEntry<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        match self {
+            CertificateEntry::X509(x509) => { x509.encode(bytes) }
+            CertificateEntry::Bikeshed(bikeshed) => { bikeshed.encode(bytes) }
+        }
+    }
+
+    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(todo!("find out how to determine what type to deserialize here"))
+    }
+}
+
+impl<'a> Codec<'a> for X509CertificateEntry<'a> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.cert.encode(bytes);
         self.exts.encode(bytes);
@@ -1475,7 +1608,13 @@ impl<'a> Codec<'a> for CertificateEntry<'a> {
     }
 }
 
-impl<'a> CertificateEntry<'a> {
+#[derive(Debug)]
+pub(crate) struct X509CertificateEntry<'a> {
+    pub(crate) cert: CertificateDer<'a>,
+    pub(crate) exts: Vec<CertificateExtension<'a>>,
+}
+
+impl<'a> X509CertificateEntry<'a> {
     pub(crate) fn new(cert: CertificateDer<'a>) -> Self {
         Self {
             cert,
@@ -1483,8 +1622,8 @@ impl<'a> CertificateEntry<'a> {
         }
     }
 
-    pub(crate) fn into_owned(self) -> CertificateEntry<'static> {
-        CertificateEntry {
+    pub(crate) fn into_owned(self) -> X509CertificateEntry<'static> {
+        X509CertificateEntry {
             cert: self.cert.into_owned(),
             exts: self
                 .exts
@@ -1516,11 +1655,6 @@ impl<'a> CertificateEntry<'a> {
     }
 }
 
-impl<'a> TlsListElement for CertificateEntry<'a> {
-    const SIZE_LEN: ListLength = ListLength::U24 {
-        max: CERTIFICATE_MAX_SIZE_LIMIT,
-    };
-}
 
 #[derive(Debug)]
 pub struct CertificatePayloadTls13<'a> {
@@ -1544,7 +1678,7 @@ impl<'a> Codec<'a> for CertificatePayloadTls13<'a> {
 
 impl<'a> CertificatePayloadTls13<'a> {
     pub(crate) fn new(
-        certs: impl Iterator<Item = &'a CertificateDer<'a>>,
+        certs: impl Iterator<Item=&'a CertificateDer<'a>>,
         ocsp_response: Option<&'a [u8]>,
     ) -> Self {
         Self {
@@ -1559,7 +1693,7 @@ impl<'a> CertificatePayloadTls13<'a> {
                         .chain(iter::repeat(None)),
                 )
                 .map(|(cert, ocsp)| {
-                    let mut e = CertificateEntry::new(cert.clone());
+                    let mut e = X509CertificateEntry::new(cert.clone());
                     if let Some(ocsp) = ocsp {
                         e.exts
                             .push(CertificateExtension::CertificateStatus(
@@ -1578,7 +1712,7 @@ impl<'a> CertificatePayloadTls13<'a> {
             entries: self
                 .entries
                 .into_iter()
-                .map(CertificateEntry::into_owned)
+                .map(X509CertificateEntry::into_owned)
                 .collect(),
         }
     }
@@ -1616,7 +1750,7 @@ impl<'a> CertificatePayloadTls13<'a> {
     pub(crate) fn end_entity_ocsp(&self) -> Vec<u8> {
         self.entries
             .first()
-            .and_then(CertificateEntry::ocsp_response)
+            .and_then(X509CertificateEntry::ocsp_response)
             .map(|resp| resp.to_vec())
             .unwrap_or_default()
     }
@@ -2667,7 +2801,7 @@ impl<'a> HandshakeMessagePayload<'a> {
             HandshakeType::HelloRetryRequest => HandshakeType::ServerHello,
             _ => self.typ,
         }
-        .encode(bytes);
+            .encode(bytes);
 
         let nested = LengthPrefixedBuffer::new(ListLength::U24 { max: usize::MAX }, bytes);
 
@@ -2886,7 +3020,7 @@ impl Codec<'_> for EchConfigExtension {
         let mut sub = r.sub(len)?;
 
         #[allow(clippy::match_single_binding)] // Future-proofing.
-        let ext = match typ {
+            let ext = match typ {
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -3007,7 +3141,7 @@ pub(crate) enum Encoding {
     EchConfirmation,
 }
 
-fn has_duplicates<I: IntoIterator<Item = E>, E: Into<T>, T: Eq + Ord>(iter: I) -> bool {
+fn has_duplicates<I: IntoIterator<Item=E>, E: Into<T>, T: Eq + Ord>(iter: I) -> bool {
     let mut seen = BTreeSet::new();
 
     for x in iter {
