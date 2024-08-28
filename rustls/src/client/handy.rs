@@ -220,10 +220,10 @@ impl AlwaysResolvesClientCert {
         private_key: Arc<dyn sign::SigningKey>,
         chain: CertificateChain<'static>,
     ) -> Result<Self, Error> {
-        Ok(Self(Arc::new(sign::CertifiedKey::new(
+        Ok(Self(Arc::new(sign::X509CertifiedKey::new(
             chain.0,
             private_key,
-        ))))
+        ).into())))
     }
 }
 

@@ -918,7 +918,7 @@ impl Accepted {
     /// Convert the [`Accepted`] into a [`ServerConnection`].
     ///
     /// Takes the state returned from [`Acceptor::accept()`] as well as the [`ServerConfig`] and
-    /// [`sign::CertifiedKey`] that should be used for the session. Returns an error if
+    /// [`sign::X509CertifiedKey`] that should be used for the session. Returns an error if
     /// configuration-dependent validation of the received `ClientHello` message fails.
     #[cfg(feature = "std")]
     pub fn into_connection(

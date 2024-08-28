@@ -15,12 +15,13 @@ use crate::client::common::{ClientAuthDetails, ServerCertDetails};
 use crate::client::{hs, ClientConfig};
 use crate::common_state::{CommonState, HandshakeKind, Side, State};
 use crate::conn::ConnectionRandoms;
+use crate::crypto::signer::X509OrBikeshedCertChain;
 use crate::crypto::KeyExchangeAlgorithm;
 use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion};
 use crate::error::{Error, InvalidMessage, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHash;
 #[cfg(feature = "logging")]
-use crate::log::{debug, trace, warn};
+use crate::log::{debug, trace, warn, error};
 use crate::msgs::base::{Payload, PayloadU16, PayloadU8};
 use crate::msgs::ccs::ChangeCipherSpecPayload;
 use crate::msgs::handshake::{
@@ -832,7 +833,7 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
 
         cx.common.check_aligned_handshake()?;
 
-        trace!("Server cert is {:?}", st.server_cert.cert_chain);
+        trace!("Server cert is {:?}", st.server_cert);
         debug!("Server DNS name is {:?}", st.server_name);
 
         let suite = st.suite;
@@ -850,9 +851,14 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
         // 6. emit a Finished, our first encrypted message under the new keys.
 
         // 1.
-        let (end_entity, intermediates) = st
-            .server_cert
-            .cert_chain
+        let (server_cert_chain, ocsp_response) = match st.server_cert {
+            ServerCertDetails::X905 { cert_chain, ocsp_response } => (cert_chain, ocsp_response),
+            ServerCertDetails::Bikeshed { .. } => {
+                error!("Bikeshed certificates are not allowed in TLS 1.2");
+                Err(PeerMisbehaved::BikeshedCertificateUsageInTLS12)?
+            }
+        };
+        let (end_entity, intermediates) = server_cert_chain
             .split_first()
             .ok_or(Error::NoCertificatesPresented)?;
 
@@ -865,7 +871,7 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
                 end_entity,
                 intermediates,
                 &st.server_name,
-                &st.server_cert.ocsp_response,
+                &ocsp_response,
                 now,
             )
             .map_err(|err| {
@@ -903,13 +909,21 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
                         .send_cert_verify_error_alert(err)
                 })?
         };
-        cx.common.peer_certificates = Some(st.server_cert.cert_chain.into_owned());
+        cx.common.peer_certificates = Some(server_cert_chain.into_owned());
 
         // 4.
         if let Some(client_auth) = &st.client_auth {
             let certs = match client_auth {
                 ClientAuthDetails::Empty { .. } => CertificateChain::default(),
-                ClientAuthDetails::Verify { certkey, .. } => CertificateChain(certkey.cert.clone()),
+                ClientAuthDetails::Verify { certkey, .. } => {
+                    let chain = match certkey.cert() {
+                        X509OrBikeshedCertChain::X509(chain) => chain,
+                        X509OrBikeshedCertChain::Bikeshed(_) => {
+                            panic!("Bikeshed certificates are not implemented for TLS 1.2")
+                        }
+                    };
+                    CertificateChain(chain.to_owned())
+                }
             };
             emit_certificate(&mut st.transcript, certs, cx.common);
         }

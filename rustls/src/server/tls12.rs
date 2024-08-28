@@ -34,7 +34,9 @@ use crate::tls12::{self, ConnectionSecrets, Tls12CipherSuite};
 use crate::verify;
 
 mod client_hello {
+    use log::error;
     use pki_types::CertificateDer;
+    use crate::crypto::signer::X509OrBikeshedCertChain;
 
     use super::*;
     use crate::crypto::SupportedKxGroup;
@@ -206,7 +208,18 @@ mod client_hello {
                 &self.randoms,
                 self.extra_exts,
             )?;
-            emit_certificate(&mut self.transcript, cx.common, server_key.get_cert());
+            let cert = match server_key.get_cert() {
+                X509OrBikeshedCertChain::X509(c) => c,
+                X509OrBikeshedCertChain::Bikeshed(_) => {
+                    error!("Merkle Tree Certificates are not allowed in TLS 1.2");
+                    return Err(cx.common.send_fatal_alert(
+                        AlertDescription::HandshakeFailure,
+                        PeerMisbehaved::BadCertChainExtensions,
+                    ));
+                }
+            };
+
+            emit_certificate(&mut self.transcript, cx.common, cert);
             if let Some(ocsp_response) = ocsp_response {
                 emit_cert_status(&mut self.transcript, cx.common, ocsp_response);
             }

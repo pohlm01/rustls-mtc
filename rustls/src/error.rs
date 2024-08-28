@@ -249,6 +249,7 @@ pub enum PeerMisbehaved {
     UnsolicitedServerHelloExtension,
     WrongGroupForKeyShare,
     UnsolicitedEchExtension,
+    BikeshedCertificateUsageInTLS12,
 }
 
 impl From<PeerMisbehaved> for Error {

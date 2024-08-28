@@ -5,12 +5,14 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{fmt, iter};
 use core::ops::Deref;
+use log::error;
 
 use pki_types::{CertificateDer, DnsName, TrustAnchor};
 
 #[cfg(feature = "tls12")]
 use crate::crypto::ActiveKeyExchange;
 use crate::crypto::SecureRandom;
+use crate::crypto::signer::X509OrBikeshedCertChain;
 use crate::enums::{
     CertificateCompressionAlgorithm, CipherSuite, EchClientHelloType, HandshakeType,
     ProtocolVersion, SignatureScheme,
@@ -22,7 +24,11 @@ use crate::ffdhe_groups::FfdheGroup;
 use crate::log::warn;
 use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
 use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, TlsListElement};
-use crate::msgs::enums::{BikeshedProofType, CertificateStatusType, CertificateType, ClaimType, ClientCertificateType, Compression, ECCurveType, EchVersion, ECPointFormat, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType, SubjectType};
+use crate::msgs::enums::{
+    BikeshedProofType, CertificateStatusType, CertificateType, ClaimType, ClientCertificateType,
+    Compression, ECCurveType, EchVersion, ECPointFormat, ExtensionType, HpkeAead, HpkeKdf, HpkeKem,
+    KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType, SubjectType,
+};
 use crate::rand;
 use crate::verify::DigitallySignedStruct;
 use crate::x509::wrap_in_sequence;
@@ -568,7 +574,6 @@ impl TlsListElement for CertificateType {
     const SIZE_LEN: ListLength = ListLength::U8;
 }
 
-
 impl ClientExtension {
     pub(crate) fn ext_type(&self) -> ExtensionType {
         match *self {
@@ -623,7 +628,9 @@ impl Codec<'_> for ClientExtension {
             }
             Self::CertificateCompressionAlgorithms(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
-            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
+                r.encode(nested.buf)
+            }
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -667,8 +674,12 @@ impl Codec<'_> for ClientExtension {
             ExtensionType::CompressCertificate => {
                 Self::CertificateCompressionAlgorithms(Vec::read(&mut sub)?)
             }
-            ExtensionType::ServerCertificateType => Self::ServerCertificateType(Vec::read(&mut sub)?),
-            ExtensionType::ClientCertificateType => Self::ClientCertificateType(Vec::read(&mut sub)?),
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertificateType(Vec::read(&mut sub)?)
+            }
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertificateType(Vec::read(&mut sub)?)
+            }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -730,7 +741,7 @@ pub enum ServerExtension {
     // RFC 7250 (Raw Public Keys)
     ServerCertificateType(CertificateType),
     ClientCertificateType(CertificateType),
-    
+
     Unknown(UnknownExtension),
 }
 
@@ -779,7 +790,9 @@ impl Codec<'_> for ServerExtension {
                 nested.buf.extend_from_slice(r);
             }
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
-            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
+                r.encode(nested.buf)
+            }
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -810,8 +823,12 @@ impl Codec<'_> for ServerExtension {
             ExtensionType::EncryptedClientHello => {
                 Self::EncryptedClientHello(ServerEncryptedClientHello::read(&mut sub)?)
             }
-            ExtensionType::ServerCertificateType => Self::ServerCertificateType(CertificateType::read(&mut sub)?),
-            ExtensionType::ClientCertificateType => Self::ClientCertificateType(CertificateType::read(&mut sub)?),
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertificateType(CertificateType::read(&mut sub)?)
+            }
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertificateType(CertificateType::read(&mut sub)?)
+            }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -920,12 +937,12 @@ impl ClientHelloPayload {
             //
             // [RFC6066]: https://datatracker.ietf.org/doc/html/rfc6066#section-3
             ClientExtension::ServerName(ref req)
-            if !req
-                .iter()
-                .any(|name| matches!(name.payload, ServerNamePayload::IpAddress(_))) =>
-                {
-                    Some(req)
-                }
+                if !req
+                    .iter()
+                    .any(|name| matches!(name.payload, ServerNamePayload::IpAddress(_))) =>
+            {
+                Some(req)
+            }
             _ => None,
         }
     }
@@ -1476,8 +1493,8 @@ impl<'a> TlsListElement for CertificateExtension<'a> {
     const SIZE_LEN: ListLength = ListLength::U16;
 }
 
-
-#[derive(Debug)]
+// TODO @max: think about whether `clone` is actually appropriate here
+#[derive(Debug, Clone)]
 pub(crate) struct BikeshedCertificate {
     assertion: Assertion,
     proof: Proof,
@@ -1494,7 +1511,7 @@ impl Codec<'_> for BikeshedCertificate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MtcTrustAnchor {
     proof_type: BikeshedProofType,
     data: PayloadU8,
@@ -1511,7 +1528,7 @@ impl Codec<'_> for MtcTrustAnchor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Proof {
     trust_anchor: MtcTrustAnchor,
     proof_data: PayloadU16,
@@ -1528,7 +1545,7 @@ impl Codec<'_> for Proof {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Assertion {
     subject_type: SubjectType,
     subject_info: PayloadU16,
@@ -1547,7 +1564,7 @@ impl Codec<'_> for Assertion {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Claim {
     claim_type: ClaimType,
     claim_info: PayloadU16,
@@ -1568,29 +1585,50 @@ impl TlsListElement for Claim {
     const SIZE_LEN: ListLength = ListLength::U16;
 }
 
-
 #[derive(Debug)]
 pub(crate) enum CertificateEntry<'a> {
-    X509(X509CertificateEntry<'a>),
+    X509(Vec<X509CertificateEntry<'a>>),
     Bikeshed(BikeshedCertificate),
 }
 
-impl<'a> TlsListElement for CertificateEntry<'a> {
-    const SIZE_LEN: ListLength = ListLength::U24 {
-        max: CERTIFICATE_MAX_SIZE_LIMIT,
-    };
+impl<'a> CertificateEntry<'a> {
+    pub(crate) fn into_owned(self) -> CertificateEntry<'static> {
+        match self {
+            CertificateEntry::X509(chain) => CertificateEntry::X509(
+                chain
+                    .into_iter()
+                    .map(X509CertificateEntry::into_owned)
+                    .collect(),
+            ),
+            CertificateEntry::Bikeshed(bikeshed) => CertificateEntry::Bikeshed(bikeshed),
+        }
+    }
+}
+
+impl<'a> From<Vec<X509CertificateEntry<'a>>> for CertificateEntry<'a> {
+    fn from(value: Vec<X509CertificateEntry<'a>>) -> Self {
+        Self::X509(value)
+    }
+}
+
+impl From<BikeshedCertificate> for CertificateEntry<'_> {
+    fn from(value: BikeshedCertificate) -> Self {
+        Self::Bikeshed(value)
+    }
 }
 
 impl<'a> Codec<'a> for CertificateEntry<'a> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         match self {
-            CertificateEntry::X509(x509) => { x509.encode(bytes) }
-            CertificateEntry::Bikeshed(bikeshed) => { bikeshed.encode(bytes) }
+            CertificateEntry::X509(x509) => x509.encode(bytes),
+            CertificateEntry::Bikeshed(bikeshed) => bikeshed.encode(bytes),
         }
     }
 
     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
-        Ok(todo!("find out how to determine what type to deserialize here"))
+        Ok(todo!(
+            "find out how to determine what type to deserialize here"
+        ))
     }
 }
 
@@ -1612,6 +1650,12 @@ impl<'a> Codec<'a> for X509CertificateEntry<'a> {
 pub(crate) struct X509CertificateEntry<'a> {
     pub(crate) cert: CertificateDer<'a>,
     pub(crate) exts: Vec<CertificateExtension<'a>>,
+}
+
+impl<'a> TlsListElement for X509CertificateEntry<'a> {
+    const SIZE_LEN: ListLength = ListLength::U24 {
+        max: CERTIFICATE_MAX_SIZE_LIMIT,
+    };
 }
 
 impl<'a> X509CertificateEntry<'a> {
@@ -1655,72 +1699,74 @@ impl<'a> X509CertificateEntry<'a> {
     }
 }
 
-
 #[derive(Debug)]
 pub struct CertificatePayloadTls13<'a> {
     pub(crate) context: PayloadU8,
-    pub(crate) entries: Vec<CertificateEntry<'a>>,
+    pub(crate) entry: CertificateEntry<'a>,
 }
 
 impl<'a> Codec<'a> for CertificatePayloadTls13<'a> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.context.encode(bytes);
-        self.entries.encode(bytes);
+        self.entry.encode(bytes);
     }
 
     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
         Ok(Self {
             context: PayloadU8::read(r)?,
-            entries: Vec::read(r)?,
+            entry: CertificateEntry::read(r)?,
         })
     }
 }
 
 impl<'a> CertificatePayloadTls13<'a> {
-    pub(crate) fn new(
-        certs: impl Iterator<Item=&'a CertificateDer<'a>>,
-        ocsp_response: Option<&'a [u8]>,
-    ) -> Self {
+    pub(crate) fn new(certs: X509OrBikeshedCertChain, ocsp_response: Option<&'a [u8]>) -> Self {
+        let entry: CertificateEntry = match certs {
+            X509OrBikeshedCertChain::X509(x509) => {
+                x509.iter()
+                    // zip certificate iterator with `ocsp_response` followed by
+                    // an infinite-length iterator of `None`.
+                    .zip(
+                        ocsp_response
+                            .into_iter()
+                            .map(Some)
+                            .chain(iter::repeat(None)),
+                    )
+                    .map(|(cert, ocsp)| {
+                        let mut e = X509CertificateEntry::new(cert.clone());
+                        if let Some(ocsp) = ocsp {
+                            e.exts
+                                .push(CertificateExtension::CertificateStatus(
+                                    CertificateStatus::new(ocsp),
+                                ));
+                        }
+                        e
+                    })
+                    .collect::<Vec<X509CertificateEntry>>()
+                    .into()
+            }
+            X509OrBikeshedCertChain::Bikeshed(c) => c.clone().into(),
+        };
+
         Self {
             context: PayloadU8::empty(),
-            entries: certs
-                // zip certificate iterator with `ocsp_response` followed by
-                // an infinite-length iterator of `None`.
-                .zip(
-                    ocsp_response
-                        .into_iter()
-                        .map(Some)
-                        .chain(iter::repeat(None)),
-                )
-                .map(|(cert, ocsp)| {
-                    let mut e = X509CertificateEntry::new(cert.clone());
-                    if let Some(ocsp) = ocsp {
-                        e.exts
-                            .push(CertificateExtension::CertificateStatus(
-                                CertificateStatus::new(ocsp),
-                            ));
-                    }
-                    e
-                })
-                .collect(),
+            entry,
         }
     }
 
     pub(crate) fn into_owned(self) -> CertificatePayloadTls13<'static> {
         CertificatePayloadTls13 {
             context: self.context,
-            entries: self
-                .entries
-                .into_iter()
-                .map(X509CertificateEntry::into_owned)
-                .collect(),
+            entry: self.entry.into_owned(),
         }
     }
 
     pub(crate) fn any_entry_has_duplicate_extension(&self) -> bool {
-        for entry in &self.entries {
-            if entry.has_duplicate_extension() {
-                return true;
+        if let CertificateEntry::X509(entries) = &self.entry {
+            for entry in entries {
+                if entry.has_duplicate_extension() {
+                    return true;
+                }
             }
         }
 
@@ -1728,9 +1774,11 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn any_entry_has_unknown_extension(&self) -> bool {
-        for entry in &self.entries {
-            if entry.has_unknown_extension() {
-                return true;
+        if let CertificateEntry::X509(entries) = &self.entry {
+            for entry in entries {
+                if entry.has_unknown_extension() {
+                    return true;
+                }
             }
         }
 
@@ -1738,9 +1786,11 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn any_entry_has_extension(&self) -> bool {
-        for entry in &self.entries {
-            if !entry.exts.is_empty() {
-                return true;
+        if let CertificateEntry::X509(entries) = &self.entry {
+            for entry in entries {
+                if !entry.exts.is_empty() {
+                    return true;
+                }
             }
         }
 
@@ -1748,20 +1798,18 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn end_entity_ocsp(&self) -> Vec<u8> {
-        self.entries
-            .first()
-            .and_then(X509CertificateEntry::ocsp_response)
-            .map(|resp| resp.to_vec())
-            .unwrap_or_default()
+        match &self.entry {
+            CertificateEntry::X509(chain) => chain
+                .first()
+                .and_then(X509CertificateEntry::ocsp_response)
+                .map(|resp| resp.to_vec())
+                .unwrap_or_default(),
+            _ => Default::default(),
+        }
     }
 
-    pub(crate) fn into_certificate_chain(self) -> CertificateChain<'a> {
-        CertificateChain(
-            self.entries
-                .into_iter()
-                .map(|e| e.cert)
-                .collect(),
-        )
+    pub(crate) fn into_certificate_entry(self) -> CertificateEntry<'a> {
+            self.entry
     }
 }
 
@@ -2801,7 +2849,7 @@ impl<'a> HandshakeMessagePayload<'a> {
             HandshakeType::HelloRetryRequest => HandshakeType::ServerHello,
             _ => self.typ,
         }
-            .encode(bytes);
+        .encode(bytes);
 
         let nested = LengthPrefixedBuffer::new(ListLength::U24 { max: usize::MAX }, bytes);
 
@@ -3020,7 +3068,7 @@ impl Codec<'_> for EchConfigExtension {
         let mut sub = r.sub(len)?;
 
         #[allow(clippy::match_single_binding)] // Future-proofing.
-            let ext = match typ {
+        let ext = match typ {
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -3141,7 +3189,7 @@ pub(crate) enum Encoding {
     EchConfirmation,
 }
 
-fn has_duplicates<I: IntoIterator<Item=E>, E: Into<T>, T: Eq + Ord>(iter: I) -> bool {
+fn has_duplicates<I: IntoIterator<Item = E>, E: Into<T>, T: Eq + Ord>(iter: I) -> bool {
     let mut seen = BTreeSet::new();
 
     for x in iter {

@@ -177,7 +177,7 @@ impl AlwaysResolvesChain {
         private_key: Arc<dyn sign::SigningKey>,
         chain: CertificateChain<'static>,
     ) -> Self {
-        Self(Arc::new(sign::CertifiedKey::new(chain.0, private_key)))
+        Self(Arc::new(sign::X509CertifiedKey::new(chain.0, private_key).into()))
     }
 
     /// Creates an `AlwaysResolvesChain`, using the supplied key, certificate chain and OCSP response.
@@ -193,7 +193,11 @@ impl AlwaysResolvesChain {
         {
             let cert = Arc::make_mut(&mut r.0);
             if !ocsp.is_empty() {
-                cert.ocsp = Some(ocsp);
+                match cert {
+                    CertifiedKey::X509(cert) => cert.ocsp = Some(ocsp),
+                    _ => {}
+                }
+
             }
         }
 
@@ -241,7 +245,7 @@ mod sni_resolver {
         /// This function fails if `name` is not a valid DNS name, or if
         /// it's not valid for the supplied certificate, or if the certificate
         /// chain is syntactically faulty.
-        pub fn add(&mut self, name: &str, ck: sign::CertifiedKey) -> Result<(), Error> {
+        pub fn add(&mut self, name: &str, ck: sign::X509CertifiedKey) -> Result<(), Error> {
             let server_name = {
                 let checked_name = DnsName::try_from(name)
                     .map_err(|_| Error::General("Bad DNS name".into()))
@@ -264,7 +268,7 @@ mod sni_resolver {
 
             if let ServerName::DnsName(name) = server_name {
                 self.by_name
-                    .insert(name.as_ref().to_string(), Arc::new(ck));
+                    .insert(name.as_ref().to_string(), Arc::new(ck.into()));
             }
             Ok(())
         }
@@ -319,7 +323,8 @@ mod mtc_resolver {
     use crate::msgs::handshake::MtcTrustAnchor;
     use crate::server;
     use crate::server::{ClientHello, ResolvesServerCertUsingSni};
-    use crate::sign::{CertifiedKey, SigningKey};
+    use crate::sign::{SigningKey};
+    use crate::sign;
 
     #[derive(Debug)]
     pub struct ResolvesServerCertUsingMtcOrX509Sni {
@@ -337,7 +342,7 @@ mod mtc_resolver {
     }
 
     impl server::ResolvesServerCert for ResolvesServerCertUsingMtcOrX509Sni {
-        fn resolve(&self, client_hello: ClientHello) -> Option<Arc<CertifiedKey>> {
+        fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
             // @max
             todo!()
         }
@@ -346,6 +351,7 @@ mod mtc_resolver {
 
 #[cfg(any(feature = "std", feature = "hashbrown"))]
 pub use mtc_resolver::ResolvesServerCertUsingMtcOrX509Sni;
+use crate::sign::CertifiedKey;
 
 #[cfg(test)]
 mod tests {

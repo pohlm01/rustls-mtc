@@ -688,7 +688,7 @@ fn cert_entry_ocsp_response() {
 
 fn test_cert_extension_getter(typ: ExtensionType, getter: fn(&X509CertificateEntry) -> bool) {
     let mut ce = sample_certificate_payload_tls13()
-        .entries
+        .entry
         .remove(0);
     let mut exts = core::mem::take(&mut ce.exts);
     exts.retain(|ext| ext.ext_type() == typ);
@@ -1169,7 +1169,7 @@ fn all_tls13_handshake_payloads() -> Vec<HandshakeMessagePayload<'static>> {
 fn sample_certificate_payload_tls13() -> CertificatePayloadTls13<'static> {
     CertificatePayloadTls13 {
         context: PayloadU8(vec![1, 2, 3]),
-        entries: vec![X509CertificateEntry {
+        entry: vec![X509CertificateEntry {
             cert: CertificateDer::from(vec![3, 4, 5]),
             exts: vec![
                 CertificateExtension::CertificateStatus(CertificateStatus {

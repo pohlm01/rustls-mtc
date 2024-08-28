@@ -15,7 +15,7 @@ log = { version = "0.4.4" }
 mio = { version = "0.8", features = ["net", "os-poll"] }
 pki-types = { package = "rustls-pki-types", version = "1", features = ["std"] }
 rcgen = { version = "0.13", features = ["pem", "aws_lc_rs"], default-features = false }
-rustls = { path = "../rustls", features = [ "logging" ]}
+rustls = { path = "../rustls", features = [ "logging", "aws_lc_rs", "std" ], default-features = false}
 rustls-pemfile = "2"
 serde = "1.0"
 serde_derive = "1.0"
