@@ -26,7 +26,7 @@ use crate::hash_hs::HandshakeHashBuffer;
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::msgs::base::Payload;
-use crate::msgs::enums::{Compression, ECPointFormat, ExtensionType, PSKKeyExchangeMode};
+use crate::msgs::enums::{CertificateType, Compression, ECPointFormat, ExtensionType, PSKKeyExchangeMode};
 use crate::msgs::handshake::{
     CertificateStatusRequest, ClientExtension, ClientHelloPayload, ClientSessionTicket,
     ConvertProtocolNameList, HandshakeMessagePayload, HandshakePayload, HasServerExtensions,
@@ -256,6 +256,8 @@ fn emit_client_hello_for_retry(
         ),
         ClientExtension::ExtendedMasterSecretRequest,
         ClientExtension::CertificateStatusRequest(CertificateStatusRequest::build_ocsp()),
+        // TODO @max make this configurable
+        ClientExtension::ClientCertificateType(vec![CertificateType::Bikeshed, CertificateType::X509])
     ];
 
     // Send the ECPointFormat extension only if we are proposing ECDHE

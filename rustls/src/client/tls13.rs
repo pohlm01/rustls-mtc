@@ -1031,7 +1031,7 @@ impl State<ClientConnectionData> for ExpectCertificate {
             ));
         }
         let end_entity_ocsp = cert_chain_or_bikeshed.end_entity_ocsp();
-        let server_cert = ServerCertDetails::new(cert_chain_or_bikeshed.entry, end_entity_ocsp);
+        let server_cert = ServerCertDetails::new(cert_chain_or_bikeshed.entries, end_entity_ocsp);
 
         Ok(Box::new(ExpectCertificateVerify {
             config: self.config,
@@ -1085,7 +1085,7 @@ impl State<ClientConnectionData> for ExpectCertificateVerify<'_> {
         // TODO @max integrate the bikeshed verification into the verifier interface instead of the
         //  match statement here
         let cert_verified = match self.server_cert {
-            ServerCertDetails::X905 {
+            ServerCertDetails::X509 {
                 ref cert_chain,
                 ref ocsp_response,
             } => {
@@ -1118,7 +1118,7 @@ impl State<ClientConnectionData> for ExpectCertificateVerify<'_> {
         // 2. Verify their signature on the handshake.
         let handshake_hash = self.transcript.current_hash();
         let sig_verified = match self.server_cert {
-            ServerCertDetails::X905 { cert_chain, .. } => {
+            ServerCertDetails::X509 { cert_chain, .. } => {
                 // TODO remove repetition with previous match statement
                 let (end_entity, _) = cert_chain
                     .split_first()

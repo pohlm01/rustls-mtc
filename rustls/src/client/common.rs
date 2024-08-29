@@ -6,14 +6,12 @@ use super::ResolvesClientCert;
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::msgs::enums::ExtensionType;
-use crate::msgs::handshake::{
-    BikeshedCertificate, CertificateChain, CertificateEntry, DistinguishedName, ServerExtension,
-};
+use crate::msgs::handshake::{BikeshedCertificate, CertificateChain, CertificateEntry, CertificateEntryEnum, DistinguishedName, ServerExtension};
 use crate::{compress, sign, SignatureScheme};
 
 #[derive(Debug)]
 pub(super) enum ServerCertDetails<'a> {
-    X905 {
+    X509 {
         cert_chain: CertificateChain<'a>,
         ocsp_response: Vec<u8>,
     },
@@ -23,25 +21,31 @@ pub(super) enum ServerCertDetails<'a> {
 }
 
 impl<'a> ServerCertDetails<'a> {
-    pub(super) fn new(cert_entry: CertificateEntry<'a>, ocsp_response: Vec<u8>) -> Self {
-        match cert_entry {
-            CertificateEntry::X509(chain) => Self::X905 {
-                cert_chain: CertificateChain(chain
+    pub(super) fn new(cert_entries: Vec<CertificateEntry<'a>>, ocsp_response: Vec<u8>) -> Self {
+        // TODO @max improve error handling
+        match &cert_entries.first().expect("Server must provide a certificate").cert {
+            CertificateEntryEnum::X509(_) =>  Self::X509 {
+                cert_chain: CertificateChain(cert_entries
                     .into_iter()
-                    .map(|e| e.cert)
+                    .map(|e| {
+                        match e.cert {
+                            CertificateEntryEnum::X509(c) => c.cert,
+                            CertificateEntryEnum::Bikeshed(_) => panic!("Encountered bikeshed certificate in a X509 certificate chain")
+                        }
+                    })
                     .collect::<Vec<CertificateDer>>()),
                 ocsp_response,
             },
-            CertificateEntry::Bikeshed(bikeshed) => Self::Bikeshed { bikeshed },
+            CertificateEntryEnum::Bikeshed(bikeshed) => Self::Bikeshed { bikeshed: bikeshed.clone() }
         }
     }
 
     pub(super) fn into_owned(self) -> ServerCertDetails<'static> {
         match self {
-            ServerCertDetails::X905 {
+            ServerCertDetails::X509 {
                 cert_chain,
                 ocsp_response,
-            } => ServerCertDetails::X905 {
+            } => ServerCertDetails::X509 {
                 cert_chain: cert_chain.into_owned(),
                 ocsp_response,
             },

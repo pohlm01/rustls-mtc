@@ -852,7 +852,7 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
 
         // 1.
         let (server_cert_chain, ocsp_response) = match st.server_cert {
-            ServerCertDetails::X905 { cert_chain, ocsp_response } => (cert_chain, ocsp_response),
+            ServerCertDetails::X509 { cert_chain, ocsp_response } => (cert_chain, ocsp_response),
             ServerCertDetails::Bikeshed { .. } => {
                 error!("Bikeshed certificates are not allowed in TLS 1.2");
                 Err(PeerMisbehaved::BikeshedCertificateUsageInTLS12)?

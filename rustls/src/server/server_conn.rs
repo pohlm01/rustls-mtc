@@ -128,6 +128,7 @@ pub struct ClientHello<'a> {
     signature_schemes: &'a [SignatureScheme],
     alpn: Option<&'a Vec<ProtocolName>>,
     cipher_suites: &'a [CipherSuite],
+    certificate_type: CertificateType,
 }
 
 impl<'a> ClientHello<'a> {
@@ -137,17 +138,21 @@ impl<'a> ClientHello<'a> {
         signature_schemes: &'a [SignatureScheme],
         alpn: Option<&'a Vec<ProtocolName>>,
         cipher_suites: &'a [CipherSuite],
+        certificate_type: CertificateType,
+        // TODO @max add supported trust anchors
     ) -> Self {
         trace!("sni {:?}", server_name);
         trace!("sig schemes {:?}", signature_schemes);
         trace!("alpn protocols {:?}", alpn);
         trace!("cipher suites {:?}", cipher_suites);
+        trace!("certificate type {:?}", certificate_type);
 
         ClientHello {
             server_name,
             signature_schemes,
             alpn,
             cipher_suites,
+            certificate_type
         }
     }
 
@@ -851,6 +856,7 @@ mod connection {
 
 #[cfg(feature = "std")]
 pub use connection::{AcceptedAlert, Acceptor, ReadEarlyData, ServerConnection};
+use crate::msgs::enums::CertificateType;
 
 /// Unbuffered version of `ServerConnection`
 ///
@@ -912,6 +918,7 @@ impl Accepted {
             &self.sig_schemes,
             payload.alpn_extension(),
             &payload.cipher_suites,
+            self.connection.certificate_type.unwrap_or(CertificateType::X509),
         )
     }
 

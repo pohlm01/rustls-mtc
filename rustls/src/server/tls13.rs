@@ -9,7 +9,6 @@ use subtle::ConstantTimeEq;
 
 pub(super) use client_hello::CompleteClientHelloHandling;
 
-use crate::{compress, rand, verify};
 use crate::check::{inappropriate_handshake_message, inappropriate_message};
 use crate::common_state::{CommonState, HandshakeKind, Protocol, Side, State};
 use crate::conn::ConnectionRandoms;
@@ -21,18 +20,19 @@ use crate::log::{debug, trace, warn};
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::KeyUpdateRequest;
 use crate::msgs::handshake::{
-    CERTIFICATE_MAX_SIZE_LIMIT, CertificateChain, CertificateEntry, CertificatePayloadTls13,
-    HandshakeMessagePayload, HandshakePayload, NewSessionTicketExtension,
-    NewSessionTicketPayloadTls13,
+    CertificateChain, CertificateEntry, CertificatePayloadTls13, HandshakeMessagePayload,
+    HandshakePayload, NewSessionTicketExtension, NewSessionTicketPayloadTls13,
+    CERTIFICATE_MAX_SIZE_LIMIT,
 };
 use crate::msgs::message::{Message, MessagePayload};
-use crate::msgs::persist;
+use crate::msgs::{handshake, persist};
 use crate::server::ServerConfig;
 use crate::suites::PartiallyExtractedSecrets;
+use crate::tls13::key_schedule::{KeyScheduleTraffic, KeyScheduleTrafficWithClientFinishedPending};
 use crate::tls13::{
     construct_client_verify_message, construct_server_verify_message, Tls13CipherSuite,
 };
-use crate::tls13::key_schedule::{KeyScheduleTraffic, KeyScheduleTrafficWithClientFinishedPending};
+use crate::{compress, rand, verify};
 
 use super::hs::{self, HandshakeHashOrBuffer, ServerContext};
 use super::server_conn::ServerConnectionData;
@@ -46,9 +46,9 @@ mod client_hello {
     use crate::enums::SignatureScheme;
     use crate::msgs::base::{Payload, PayloadU8};
     use crate::msgs::ccs::ChangeCipherSpecPayload;
-    use crate::msgs::enums::{Compression, NamedGroup, PSKKeyExchangeMode};
+    use crate::msgs::enums::{CertificateType, Compression, NamedGroup, PSKKeyExchangeMode};
     use crate::msgs::handshake::{
-        CertificatePayloadTls13, CertificateRequestPayloadTls13, CertReqExtension,
+        CertReqExtension, CertificatePayloadTls13, CertificateRequestPayloadTls13,
         ClientHelloPayload, HelloRetryExtension, HelloRetryRequest, KeyShareEntry, Random,
         ServerExtension, ServerHelloPayload, SessionId,
     };
@@ -178,13 +178,13 @@ mod client_hello {
             let cert_compressor = client_hello
                 .certificate_compression_extension()
                 .and_then(|offered|
-                // prefer server order when choosing a compression: the client's
-                // extension here does not denote any preference.
-                self.config
-                    .cert_compressors
-                    .iter()
-                    .find(|compressor| offered.contains(&compressor.algorithm()))
-                    .cloned());
+                    // prefer server order when choosing a compression: the client's
+                    // extension here does not denote any preference.
+                    self.config
+                        .cert_compressors
+                        .iter()
+                        .find(|compressor| offered.contains(&compressor.algorithm()))
+                        .cloned());
 
             let early_data_requested = client_hello.early_data_extension_offered();
 
@@ -1108,7 +1108,7 @@ impl State<ServerConnectionData> for ExpectCertificate {
             m,
             HandshakeType::Certificate,
             HandshakePayload::CertificateTls13
-        )?;
+        )?.into_owned(); // TODO @max get rid of `into_owned()`
 
         // We don't send any CertificateRequest extensions, so any extensions
         // here are illegal.
@@ -1116,17 +1116,8 @@ impl State<ServerConnectionData> for ExpectCertificate {
             return Err(PeerMisbehaved::UnsolicitedCertExtension.into());
         }
 
-        let client_cert: Vec<_> = match certp.into_certificate_entry() {
-            CertificateEntry::X509(x509) => x509
-                .into_iter()
-                .map(|e| e.cert.into_owned())
-                .collect(),
-            CertificateEntry::Bikeshed(_) => {
-                unimplemented!(
-                    "Bikeshed certificates are not yet implemented for client authentication"
-                )
-            }
-        };
+        // todo!("@max client certificates are currently not supported");
+        let client_cert = certp.into_certificate_chain();
 
         let mandatory = self
             .config
@@ -1170,7 +1161,7 @@ impl State<ServerConnectionData> for ExpectCertificate {
             suite: self.suite,
             transcript: self.transcript,
             key_schedule: self.key_schedule,
-            client_cert: CertificateChain(client_cert),
+            client_cert,
             send_tickets: self.send_tickets,
         }))
     }

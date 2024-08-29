@@ -9,9 +9,9 @@ use crate::error::{Error, InvalidMessage, PeerMisbehaved};
 use crate::log::{debug, warn};
 use crate::msgs::alert::AlertMessagePayload;
 use crate::msgs::base::Payload;
-use crate::msgs::enums::{AlertLevel, KeyUpdateRequest};
+use crate::msgs::enums::{AlertLevel, CertificateType, KeyUpdateRequest};
 use crate::msgs::fragmenter::MessageFragmenter;
-use crate::msgs::handshake::CertificateChain;
+use crate::msgs::handshake::{BikeshedCertificate, CertificateChain};
 use crate::msgs::message::{
     Message, MessagePayload, OutboundChunks, OutboundOpaqueMessage, OutboundPlainMessage,
     PlainMessage,
@@ -52,6 +52,9 @@ pub struct CommonState {
     pub(crate) quic: quic::Quic,
     pub(crate) enable_secret_extraction: bool,
     temper_counters: TemperCounters,
+    
+    pub(crate) certificate_type: Option<CertificateType>,
+    pub(crate) peer_bikeshed_certificate: Option<BikeshedCertificate>,
 }
 
 impl CommonState {
@@ -81,6 +84,8 @@ impl CommonState {
             quic: quic::Quic::default(),
             enable_secret_extraction: false,
             temper_counters: TemperCounters::default(),
+            certificate_type: None,
+            peer_bikeshed_certificate: None,
         }
     }
 

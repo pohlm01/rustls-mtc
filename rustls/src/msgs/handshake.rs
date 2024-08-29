@@ -3,16 +3,16 @@ use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::{fmt, iter};
 use core::ops::Deref;
+use core::{fmt, iter};
 use log::error;
 
 use pki_types::{CertificateDer, DnsName, TrustAnchor};
 
+use crate::crypto::signer::X509OrBikeshedCertChain;
 #[cfg(feature = "tls12")]
 use crate::crypto::ActiveKeyExchange;
 use crate::crypto::SecureRandom;
-use crate::crypto::signer::X509OrBikeshedCertChain;
 use crate::enums::{
     CertificateCompressionAlgorithm, CipherSuite, EchClientHelloType, HandshakeType,
     ProtocolVersion, SignatureScheme,
@@ -26,7 +26,7 @@ use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
 use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, TlsListElement};
 use crate::msgs::enums::{
     BikeshedProofType, CertificateStatusType, CertificateType, ClaimType, ClientCertificateType,
-    Compression, ECCurveType, EchVersion, ECPointFormat, ExtensionType, HpkeAead, HpkeKdf, HpkeKem,
+    Compression, ECCurveType, ECPointFormat, EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem,
     KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType, SubjectType,
 };
 use crate::rand;
@@ -1586,95 +1586,41 @@ impl TlsListElement for Claim {
 }
 
 #[derive(Debug)]
-pub(crate) enum CertificateEntry<'a> {
-    X509(Vec<X509CertificateEntry<'a>>),
+pub(crate) enum CertificateEntryEnum<'a> {
+    X509(X509CertificateEntry<'a>),
     Bikeshed(BikeshedCertificate),
 }
 
-impl<'a> CertificateEntry<'a> {
-    pub(crate) fn into_owned(self) -> CertificateEntry<'static> {
-        match self {
-            CertificateEntry::X509(chain) => CertificateEntry::X509(
-                chain
-                    .into_iter()
-                    .map(X509CertificateEntry::into_owned)
-                    .collect(),
-            ),
-            CertificateEntry::Bikeshed(bikeshed) => CertificateEntry::Bikeshed(bikeshed),
-        }
-    }
-}
-
-impl<'a> From<Vec<X509CertificateEntry<'a>>> for CertificateEntry<'a> {
-    fn from(value: Vec<X509CertificateEntry<'a>>) -> Self {
-        Self::X509(value)
-    }
-}
-
-impl From<BikeshedCertificate> for CertificateEntry<'_> {
+impl From<BikeshedCertificate> for CertificateEntryEnum<'static> {
     fn from(value: BikeshedCertificate) -> Self {
         Self::Bikeshed(value)
     }
 }
 
-impl<'a> Codec<'a> for CertificateEntry<'a> {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        match self {
-            CertificateEntry::X509(x509) => x509.encode(bytes),
-            CertificateEntry::Bikeshed(bikeshed) => bikeshed.encode(bytes),
-        }
-    }
-
-    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
-        Ok(todo!(
-            "find out how to determine what type to deserialize here"
-        ))
-    }
-}
-
-impl<'a> Codec<'a> for X509CertificateEntry<'a> {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.cert.encode(bytes);
-        self.exts.encode(bytes);
-    }
-
-    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
-        Ok(Self {
-            cert: CertificateDer::read(r)?,
-            exts: Vec::read(r)?,
-        })
+impl<'a> From<X509CertificateEntry<'a>> for CertificateEntryEnum<'a> {
+    fn from(value: X509CertificateEntry<'a>) -> Self {
+        Self::X509(value)
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct X509CertificateEntry<'a> {
-    pub(crate) cert: CertificateDer<'a>,
+pub(crate) struct CertificateEntry<'a> {
+    pub(crate) cert: CertificateEntryEnum<'a>,
     pub(crate) exts: Vec<CertificateExtension<'a>>,
 }
 
-impl<'a> TlsListElement for X509CertificateEntry<'a> {
-    const SIZE_LEN: ListLength = ListLength::U24 {
-        max: CERTIFICATE_MAX_SIZE_LIMIT,
-    };
-}
-
-impl<'a> X509CertificateEntry<'a> {
-    pub(crate) fn new(cert: CertificateDer<'a>) -> Self {
-        Self {
-            cert,
-            exts: Vec::new(),
-        }
-    }
-
-    pub(crate) fn into_owned(self) -> X509CertificateEntry<'static> {
-        X509CertificateEntry {
-            cert: self.cert.into_owned(),
-            exts: self
-                .exts
-                .into_iter()
-                .map(CertificateExtension::into_owned)
-                .collect(),
-        }
+impl<'a> CertificateEntry<'a> {
+    pub(crate) fn into_owned(self) -> CertificateEntry<'static> {
+        let exts = self
+            .exts
+            .into_iter()
+            .map(CertificateExtension::into_owned)
+            .collect();
+        let cert = match self.cert {
+            CertificateEntryEnum::X509(x509) => x509.into_owned().into(),
+            CertificateEntryEnum::Bikeshed(bikeshed) => bikeshed.into(),
+        };
+        CertificateEntry { cert, exts }
     }
 
     pub(crate) fn has_duplicate_extension(&self) -> bool {
@@ -1699,74 +1645,155 @@ impl<'a> X509CertificateEntry<'a> {
     }
 }
 
+impl<'a> From<X509CertificateEntry<'a>> for CertificateEntry<'a> {
+    fn from(value: X509CertificateEntry<'a>) -> Self {
+        Self {
+            cert: CertificateEntryEnum::X509(value),
+            exts: vec![],
+        }
+    }
+}
+
+impl From<BikeshedCertificate> for CertificateEntry<'_> {
+    fn from(value: BikeshedCertificate) -> Self {
+        Self {
+            cert: CertificateEntryEnum::Bikeshed(value),
+            exts: vec![],
+        }
+    }
+}
+
+impl<'a> Codec<'a> for CertificateEntry<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        match self.cert {
+            CertificateEntryEnum::X509(ref x509) => x509.encode(bytes),
+            CertificateEntryEnum::Bikeshed(ref bikeshed) => bikeshed.encode(bytes),
+        }
+        self.exts.encode(bytes);
+    }
+
+    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(todo!(
+            "find out how to determine what type to deserialize here"
+        ))
+    }
+}
+
+impl<'a> Codec<'a> for X509CertificateEntry<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.cert.encode(bytes);
+    }
+
+    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(Self {
+            cert: CertificateDer::read(r)?,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct X509CertificateEntry<'a> {
+    pub(crate) cert: CertificateDer<'a>,
+    // TODO @max move this up to `CertificateEntry`
+}
+
+impl TlsListElement for CertificateEntry<'_> {
+    const SIZE_LEN: ListLength = ListLength::U24 {
+        max: CERTIFICATE_MAX_SIZE_LIMIT,
+    };
+}
+
+impl<'a> X509CertificateEntry<'a> {
+    pub(crate) fn new(cert: CertificateDer<'a>) -> Self {
+        Self { cert }
+    }
+
+    pub(crate) fn into_owned(self) -> X509CertificateEntry<'static> {
+        X509CertificateEntry {
+            cert: self.cert.into_owned(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CertificatePayloadTls13<'a> {
     pub(crate) context: PayloadU8,
-    pub(crate) entry: CertificateEntry<'a>,
+    pub(crate) entries: Vec<CertificateEntry<'a>>,
 }
 
 impl<'a> Codec<'a> for CertificatePayloadTls13<'a> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.context.encode(bytes);
-        self.entry.encode(bytes);
+        self.entries.encode(bytes);
     }
 
     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
         Ok(Self {
             context: PayloadU8::read(r)?,
-            entry: CertificateEntry::read(r)?,
+            entries: Vec::read(r)?,
         })
     }
 }
 
 impl<'a> CertificatePayloadTls13<'a> {
     pub(crate) fn new(certs: X509OrBikeshedCertChain, ocsp_response: Option<&'a [u8]>) -> Self {
-        let entry: CertificateEntry = match certs {
-            X509OrBikeshedCertChain::X509(x509) => {
-                x509.iter()
-                    // zip certificate iterator with `ocsp_response` followed by
-                    // an infinite-length iterator of `None`.
-                    .zip(
-                        ocsp_response
-                            .into_iter()
-                            .map(Some)
-                            .chain(iter::repeat(None)),
-                    )
-                    .map(|(cert, ocsp)| {
-                        let mut e = X509CertificateEntry::new(cert.clone());
-                        if let Some(ocsp) = ocsp {
-                            e.exts
-                                .push(CertificateExtension::CertificateStatus(
-                                    CertificateStatus::new(ocsp),
-                                ));
-                        }
-                        e
-                    })
-                    .collect::<Vec<X509CertificateEntry>>()
-                    .into()
+        match certs {
+            X509OrBikeshedCertChain::X509(chain) => {
+                Self {
+                    context: PayloadU8::empty(),
+                    entries: chain
+                        .into_iter()
+                        // zip certificate iterator with `ocsp_response` followed by
+                        // an infinite-length iterator of `None`.
+                        .zip(
+                            ocsp_response
+                                .into_iter()
+                                .map(Some)
+                                .chain(iter::repeat(None)),
+                        )
+                        .map(|(cert, ocsp)| {
+                            let mut e = CertificateEntry {
+                                cert: CertificateEntryEnum::X509(X509CertificateEntry {
+                                    cert: cert.clone(),
+                                }),
+                                exts: vec![],
+                            };
+                            if let Some(ocsp) = ocsp {
+                                e.exts
+                                    .push(CertificateExtension::CertificateStatus(
+                                        CertificateStatus::new(ocsp),
+                                    ));
+                            }
+                            e
+                        })
+                        .collect(),
+                }
             }
-            X509OrBikeshedCertChain::Bikeshed(c) => c.clone().into(),
-        };
-
-        Self {
-            context: PayloadU8::empty(),
-            entry,
+            X509OrBikeshedCertChain::Bikeshed(b) => Self {
+                context: PayloadU8::empty(),
+                entries: vec![CertificateEntry {
+                    cert: CertificateEntryEnum::Bikeshed(b.clone()),
+                    exts: vec![],
+                }],
+            },
         }
     }
 
     pub(crate) fn into_owned(self) -> CertificatePayloadTls13<'static> {
         CertificatePayloadTls13 {
             context: self.context,
-            entry: self.entry.into_owned(),
+            entries: self
+                .entries
+                .into_iter()
+                .map(|e| e.into_owned())
+                .collect(),
         }
     }
 
     pub(crate) fn any_entry_has_duplicate_extension(&self) -> bool {
-        if let CertificateEntry::X509(entries) = &self.entry {
-            for entry in entries {
-                if entry.has_duplicate_extension() {
-                    return true;
-                }
+        for entry in &self.entries {
+            if entry.has_duplicate_extension() {
+                return true;
             }
         }
 
@@ -1774,11 +1801,9 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn any_entry_has_unknown_extension(&self) -> bool {
-        if let CertificateEntry::X509(entries) = &self.entry {
-            for entry in entries {
-                if entry.has_unknown_extension() {
-                    return true;
-                }
+        for entry in &self.entries {
+            if entry.has_unknown_extension() {
+                return true;
             }
         }
 
@@ -1786,30 +1811,36 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn any_entry_has_extension(&self) -> bool {
-        if let CertificateEntry::X509(entries) = &self.entry {
-            for entry in entries {
-                if !entry.exts.is_empty() {
-                    return true;
-                }
+        for entry in &self.entries {
+            if !entry.exts.is_empty() {
+                return true;
             }
         }
-
         false
     }
 
     pub(crate) fn end_entity_ocsp(&self) -> Vec<u8> {
-        match &self.entry {
-            CertificateEntry::X509(chain) => chain
-                .first()
-                .and_then(X509CertificateEntry::ocsp_response)
-                .map(|resp| resp.to_vec())
-                .unwrap_or_default(),
-            _ => Default::default(),
-        }
+        self
+            .entries
+            .first()
+            .map(|e| e.ocsp_response())
+            .flatten()
+            .unwrap_or_default()
+            .to_vec()
     }
 
-    pub(crate) fn into_certificate_entry(self) -> CertificateEntry<'a> {
-            self.entry
+    pub(crate) fn into_certificate_chain(self) -> CertificateChain<'a> {
+        CertificateChain(
+            self.entries
+                .into_iter()
+                .filter_map(|e| {
+                    match e.cert {
+                        CertificateEntryEnum::X509(cert) => Some(cert.cert),
+                        CertificateEntryEnum::Bikeshed(_) => None
+                    }
+                })
+                .collect(),
+        )
     }
 }
 
@@ -3203,8 +3234,6 @@ fn has_duplicates<I: IntoIterator<Item = E>, E: Into<T>, T: Eq + Ord>(iter: I) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_ech_config_dupe_exts() {
         let unknown_ext = EchConfigExtension::Unknown(UnknownExtension {
