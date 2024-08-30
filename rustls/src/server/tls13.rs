@@ -364,11 +364,26 @@ mod client_hello {
             }
 
             let mut ocsp_response = server_key.get_ocsp();
+
+            let agreed_cert_type = if let Some(cert_types) = client_hello.server_certificate_type_extension() {
+                // TODO @max make this configurable
+                vec![CertificateType::Bikeshed, CertificateType::X509]
+                    .into_iter()
+                    .find(|server_preference| {
+                        cert_types
+                            .into_iter()
+                            .any(|client_preference| client_preference == server_preference)
+                    })
+            } else {
+                None
+            };
+            
             let doing_early_data = emit_encrypted_extensions(
                 &mut self.transcript,
                 self.suite,
                 cx,
                 &mut ocsp_response,
+                agreed_cert_type,
                 client_hello,
                 resumedata.as_ref(),
                 self.extra_exts,
@@ -683,6 +698,7 @@ mod client_hello {
         suite: &'static Tls13CipherSuite,
         cx: &mut ServerContext<'_>,
         ocsp_response: &mut Option<&[u8]>,
+        agreed_cert_type: Option<CertificateType>,
         hello: &ClientHelloPayload,
         resumedata: Option<&persist::ServerSessionValue>,
         extra_exts: Vec<ServerExtension>,
@@ -694,6 +710,10 @@ mod client_hello {
         let early_data = decide_if_early_data_allowed(cx, hello, resumedata, suite, config);
         if early_data == EarlyDataDecision::Accepted {
             ep.exts.push(ServerExtension::EarlyData);
+        }
+
+        if let Some(cert_type) = agreed_cert_type {
+            ep.exts.push(ServerExtension::ServerCertificateType(cert_type));
         }
 
         let ee = Message {
@@ -1108,7 +1128,8 @@ impl State<ServerConnectionData> for ExpectCertificate {
             m,
             HandshakeType::Certificate,
             HandshakePayload::CertificateTls13
-        )?.into_owned(); // TODO @max get rid of `into_owned()`
+        )?
+        .into_owned(); // TODO @max get rid of `into_owned()`
 
         // We don't send any CertificateRequest extensions, so any extensions
         // here are illegal.
@@ -1116,7 +1137,7 @@ impl State<ServerConnectionData> for ExpectCertificate {
             return Err(PeerMisbehaved::UnsolicitedCertExtension.into());
         }
 
-        // todo!("@max client certificates are currently not supported");
+        // TODO @max client certificates are currently not supported
         let client_cert = certp.into_certificate_chain();
 
         let mandatory = self

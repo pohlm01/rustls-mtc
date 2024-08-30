@@ -5,7 +5,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Deref;
 use core::{fmt, iter};
-use log::error;
+use log::{error, trace};
+use std::io::Read;
 
 use pki_types::{CertificateDer, DnsName, TrustAnchor};
 
@@ -1079,6 +1080,16 @@ impl ClientHelloPayload {
             _ => None,
         }
     }
+    
+    pub(crate) fn server_certificate_type_extension(
+        &self
+    ) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match *ext {
+            ClientExtension::ServerCertificateType(ref types) => Some(types),
+            _ => None
+        }
+    }
 
     pub(crate) fn has_certificate_compression_extension_with_duplicates(&self) -> bool {
         if let Some(algs) = self.certificate_compression_extension() {
@@ -1434,6 +1445,8 @@ pub(crate) const CERTIFICATE_MAX_SIZE_LIMIT: usize = 0x1_0000;
 #[derive(Debug)]
 pub(crate) enum CertificateExtension<'a> {
     CertificateStatus(CertificateStatus<'a>),
+    // TODO @max add support for client certificate type
+    ServerCertificateType(CertificateType),
     Unknown(UnknownExtension),
 }
 
@@ -1441,6 +1454,7 @@ impl<'a> CertificateExtension<'a> {
     pub(crate) fn ext_type(&self) -> ExtensionType {
         match *self {
             Self::CertificateStatus(_) => ExtensionType::StatusRequest,
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -1455,6 +1469,7 @@ impl<'a> CertificateExtension<'a> {
     pub(crate) fn into_owned(self) -> CertificateExtension<'static> {
         match self {
             Self::CertificateStatus(st) => CertificateExtension::CertificateStatus(st.into_owned()),
+            Self::ServerCertificateType(sct) => CertificateExtension::ServerCertificateType(sct),
             Self::Unknown(unk) => CertificateExtension::Unknown(unk),
         }
     }
@@ -1467,6 +1482,7 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
         let nested = LengthPrefixedBuffer::new(ListLength::U16, bytes);
         match *self {
             Self::CertificateStatus(ref r) => r.encode(nested.buf),
+            Self::ServerCertificateType(r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -1480,6 +1496,10 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
             ExtensionType::StatusRequest => {
                 let st = CertificateStatus::read(&mut sub)?;
                 Self::CertificateStatus(st)
+            }
+            ExtensionType::ServerCertificateType => {
+                let sct = CertificateType::read(&mut sub)?;
+                Self::ServerCertificateType(sct)
             }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
@@ -1502,12 +1522,47 @@ pub(crate) struct BikeshedCertificate {
 
 impl Codec<'_> for BikeshedCertificate {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.assertion.encode(bytes);
-        self.proof.encode(bytes);
+        let mut inner = Vec::new();
+        self.assertion.encode(&mut inner);
+        self.proof.encode(&mut inner);
+        AnyCertificate {
+            data: PayloadU24(Payload::new(inner)),
+        }
+        .encode(bytes);
     }
 
-    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
-        todo!("@max")
+    fn read(r: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        let inner = AnyCertificate::read(r)?;
+        inner.try_into()
+    }
+}
+
+impl TryFrom<AnyCertificate<'_>> for BikeshedCertificate {
+    type Error = InvalidMessage;
+
+    fn try_from(any_cert: AnyCertificate) -> Result<Self, Self::Error> {
+        let mut bytes = Reader::init(any_cert.data.0.bytes());
+        Ok(Self {
+            assertion: Assertion::read(&mut bytes)?,
+            proof: Proof::read(&mut bytes)?,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct AnyCertificate<'a> {
+    data: PayloadU24<'a>,
+}
+
+impl<'a> Codec<'a> for AnyCertificate<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.data.encode(bytes);
+    }
+
+    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(Self {
+            data: PayloadU24::read(r)?,
+        })
     }
 }
 
@@ -1673,9 +1728,46 @@ impl<'a> Codec<'a> for CertificateEntry<'a> {
     }
 
     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
-        Ok(todo!(
-            "find out how to determine what type to deserialize here"
-        ))
+        let cert = AnyCertificate::read(r)?;
+        let exts: Vec<CertificateExtension> = Vec::read(r)?;
+
+        let cert_type = if let Some(fist_ext) = exts.first() {
+            match fist_ext {
+                CertificateExtension::CertificateStatus(_) => {
+                    trace!("found CertificateStatus Extension");
+                    CertificateType::X509
+                }
+                CertificateExtension::ServerCertificateType(cert_type) => {
+                    trace!(
+                        "found ServerCertificateType Extension with value {:?}",
+                        cert_type
+                    );
+                    *cert_type
+                }
+                CertificateExtension::Unknown(_) => {
+                    trace!("found unknown certificate extension");
+                    CertificateType::X509
+                }
+            }
+        } else {
+            trace!("Did not find any certificate extension");
+            CertificateType::X509
+        };
+
+        Ok(match cert_type {
+            CertificateType::X509 => Self {
+                cert: CertificateEntryEnum::X509(cert.try_into()?),
+                exts,
+            },
+            CertificateType::Bikeshed => Self {
+                cert: CertificateEntryEnum::Bikeshed(cert.try_into()?),
+                exts,
+            },
+            _ => {
+                warn!("Encountered unknown certificate type. Could not decode");
+                Err(InvalidMessage::InvalidContentType)?
+            }
+        })
     }
 }
 
@@ -1694,7 +1786,16 @@ impl<'a> Codec<'a> for X509CertificateEntry<'a> {
 #[derive(Debug)]
 pub(crate) struct X509CertificateEntry<'a> {
     pub(crate) cert: CertificateDer<'a>,
-    // TODO @max move this up to `CertificateEntry`
+}
+
+impl TryFrom<AnyCertificate<'_>> for X509CertificateEntry<'_> {
+    type Error = InvalidMessage;
+
+    fn try_from(any_cert: AnyCertificate) -> Result<Self, Self::Error> {
+        Ok(Self {
+            cert: CertificateDer::from(any_cert.data.0.into_vec()),
+        })
+    }
 }
 
 impl TlsListElement for CertificateEntry<'_> {
@@ -1820,8 +1921,7 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn end_entity_ocsp(&self) -> Vec<u8> {
-        self
-            .entries
+        self.entries
             .first()
             .map(|e| e.ocsp_response())
             .flatten()
@@ -1833,11 +1933,9 @@ impl<'a> CertificatePayloadTls13<'a> {
         CertificateChain(
             self.entries
                 .into_iter()
-                .filter_map(|e| {
-                    match e.cert {
-                        CertificateEntryEnum::X509(cert) => Some(cert.cert),
-                        CertificateEntryEnum::Bikeshed(_) => None
-                    }
+                .filter_map(|e| match e.cert {
+                    CertificateEntryEnum::X509(cert) => Some(cert.cert),
+                    CertificateEntryEnum::Bikeshed(_) => None,
                 })
                 .collect(),
         )

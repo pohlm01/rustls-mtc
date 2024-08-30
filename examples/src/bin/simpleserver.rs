@@ -13,6 +13,8 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn StdError>> {
     let mut args = env::args();
@@ -42,8 +44,9 @@ fn main() -> Result<(), Box<dyn StdError>> {
     conn.writer()
         .write_all(b"Hello from the server")?;
     conn.complete_io(&mut stream)?;
-    let mut buf = [0; 64];
-    let len = conn.reader().read(&mut buf)?;
+    sleep(Duration::from_secs(1));
+    let mut buf = Vec::new();
+    let len = conn.reader().read_to_end(&mut buf)?;
     println!("Received message from client: {:?}", &buf[..len]);
 
     Ok(())

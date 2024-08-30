@@ -257,7 +257,7 @@ fn emit_client_hello_for_retry(
         ClientExtension::ExtendedMasterSecretRequest,
         ClientExtension::CertificateStatusRequest(CertificateStatusRequest::build_ocsp()),
         // TODO @max make this configurable
-        ClientExtension::ClientCertificateType(vec![CertificateType::Bikeshed, CertificateType::X509])
+        ClientExtension::ServerCertificateType(vec![CertificateType::Bikeshed, CertificateType::X509])
     ];
 
     // Send the ECPointFormat extension only if we are proposing ECDHE
