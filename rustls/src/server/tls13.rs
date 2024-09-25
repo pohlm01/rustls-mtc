@@ -3,7 +3,6 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use log::error;
 use pki_types::{CertificateDer, UnixTime};
 use subtle::ConstantTimeEq;
 
@@ -16,7 +15,7 @@ use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion
 use crate::error::{Error, InvalidMessage, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHash;
 #[cfg(feature = "logging")]
-use crate::log::{debug, trace, warn};
+use crate::log::{debug, trace, warn, error};
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::KeyUpdateRequest;
 use crate::msgs::handshake::{

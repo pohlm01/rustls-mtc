@@ -201,6 +201,10 @@ impl<'a> ClientHello<'a> {
     pub fn cipher_suites(&self) -> &[CipherSuite] {
         self.cipher_suites
     }
+    
+    pub fn certificate_type(&self) -> CertificateType {
+        self.certificate_type
+    }
 }
 
 /// Common configuration for a set of server sessions.

@@ -1,17 +1,18 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
-
+use std::collections::BTreeMap;
+use std::prelude::v1::Box;
 use pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::builder::{ConfigBuilder, WantsVerifier};
 use crate::crypto::CryptoProvider;
 use crate::error::Error;
-use crate::msgs::handshake::CertificateChain;
+use crate::msgs::handshake::{BikeshedCertificate, CertificateChain, MtcTrustAnchor};
 use crate::server::{handy, ResolvesServerCert, ServerConfig};
 use crate::time_provider::TimeProvider;
 use crate::verify::{ClientCertVerifier, NoClientAuth};
-use crate::{compress, versions, NoKeyLog};
+use crate::{compress, sign, versions, NoKeyLog};
 
 impl ConfigBuilder<ServerConfig, WantsVerifier> {
     /// Choose how to verify client certificates.
@@ -49,6 +50,24 @@ pub struct WantsServerCert {
 }
 
 impl ConfigBuilder<ServerConfig, WantsServerCert> {
+    pub fn with_mct_and_x509_cert(
+        self,
+        x509_cert_chain: Vec<CertificateDer<'static>>,
+        key_der: PrivateKeyDer<'static>,
+        by_trust_anchor: BTreeMap<MtcTrustAnchor, Arc<sign::CertifiedKey>>,
+    ) -> Result<ServerConfig, Error> {
+        let private_key = self
+            .state
+            .provider
+            .key_provider
+            .load_private_key(key_der)?;
+        
+        let x509_resolver = handy::AlwaysResolvesChain::new(private_key, CertificateChain(x509_cert_chain));
+        
+        let resolver = handy::ResolvesServerCertUsingMtcOrX509Sni::new(Box::new(x509_resolver), by_trust_anchor);
+        Ok(self.with_cert_resolver(Arc::new(resolver)))
+    }
+
     /// Sets a single certificate chain and matching private key.  This
     /// certificate and key is used for all subsequent connections,
     /// irrespective of things like SNI hostname.

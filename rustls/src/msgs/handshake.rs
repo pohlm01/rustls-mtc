@@ -1080,14 +1080,12 @@ impl ClientHelloPayload {
             _ => None,
         }
     }
-    
-    pub(crate) fn server_certificate_type_extension(
-        &self
-    ) -> Option<&[CertificateType]> {
+
+    pub(crate) fn server_certificate_type_extension(&self) -> Option<&[CertificateType]> {
         let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
         match *ext {
             ClientExtension::ServerCertificateType(ref types) => Some(types),
-            _ => None
+            _ => None,
         }
     }
 
@@ -1578,8 +1576,11 @@ impl Codec<'_> for MtcTrustAnchor {
         self.data.encode(bytes);
     }
 
-    fn read(_: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
-        todo!("@max")
+    fn read(r: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        Ok(Self {
+            proof_type: BikeshedProofType::read(r)?,
+            data: PayloadU8::read(r)?,
+        })
     }
 }
 
