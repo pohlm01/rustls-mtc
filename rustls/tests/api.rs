@@ -867,7 +867,7 @@ struct ServerCheckCertResolve {
 }
 
 impl ResolvesServerCert for ServerCheckCertResolve {
-    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
+    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::X509CertifiedKey >> {
         if client_hello
             .signature_schemes()
             .is_empty()
@@ -1146,7 +1146,7 @@ fn server_cert_resolve_reduces_sigalgs_for_ecdsa_ciphersuite() {
 struct ServerCheckNoSni {}
 
 impl ResolvesServerCert for ServerCheckNoSni {
-    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
+    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::X509CertifiedKey >> {
         assert!(client_hello.server_name().is_none());
 
         None
@@ -1497,7 +1497,7 @@ impl ResolvesClientCert for ClientCheckCertResolve {
         &self,
         root_hint_subjects: &[&[u8]],
         sigschemes: &[SignatureScheme],
-    ) -> Option<Arc<sign::CertifiedKey>> {
+    ) -> Option<Arc<sign::X509CertifiedKey >> {
         self.query_count
             .fetch_add(1, Ordering::SeqCst);
 
@@ -2799,7 +2799,7 @@ fn sni_resolver_works() {
     resolver
         .add(
             "localhost",
-            sign::CertifiedKey::new(kt.get_chain(), signing_key.clone()),
+            sign::X509CertifiedKey::new(kt.get_chain(), signing_key.clone()),
         )
         .unwrap();
 
@@ -2839,21 +2839,21 @@ fn sni_resolver_rejects_wrong_names() {
         Ok(()),
         resolver.add(
             "localhost",
-            sign::CertifiedKey::new(kt.get_chain(), signing_key.clone())
+            sign::X509CertifiedKey::new(kt.get_chain(), signing_key.clone())
         )
     );
     assert_eq!(
         Err(Error::InvalidCertificate(CertificateError::NotValidForName)),
         resolver.add(
             "not-localhost",
-            sign::CertifiedKey::new(kt.get_chain(), signing_key.clone())
+            sign::X509CertifiedKey::new(kt.get_chain(), signing_key.clone())
         )
     );
     assert_eq!(
         Err(Error::General("Bad DNS name".into())),
         resolver.add(
             "not ascii 🦀",
-            sign::CertifiedKey::new(kt.get_chain(), signing_key.clone())
+            sign::X509CertifiedKey::new(kt.get_chain(), signing_key.clone())
         )
     );
 }
@@ -2869,7 +2869,7 @@ fn sni_resolver_lower_cases_configured_names() {
         Ok(()),
         resolver.add(
             "LOCALHOST",
-            sign::CertifiedKey::new(kt.get_chain(), signing_key.clone())
+            sign::X509CertifiedKey::new(kt.get_chain(), signing_key.clone())
         )
     );
 
@@ -2896,7 +2896,7 @@ fn sni_resolver_lower_cases_queried_names() {
         Ok(()),
         resolver.add(
             "localhost",
-            sign::CertifiedKey::new(kt.get_chain(), signing_key.clone())
+            sign::X509CertifiedKey::new(kt.get_chain(), signing_key.clone())
         )
     );
 
@@ -2922,7 +2922,7 @@ fn sni_resolver_rejects_bad_certs() {
         Err(Error::NoCertificatesPresented),
         resolver.add(
             "localhost",
-            sign::CertifiedKey::new(vec![], signing_key.clone())
+            sign::X509CertifiedKey::new(vec![], signing_key.clone())
         )
     );
 
@@ -2931,7 +2931,7 @@ fn sni_resolver_rejects_bad_certs() {
         Err(Error::InvalidCertificate(CertificateError::BadEncoding)),
         resolver.add(
             "localhost",
-            sign::CertifiedKey::new(bad_chain, signing_key.clone())
+            sign::X509CertifiedKey::new(bad_chain, signing_key.clone())
         )
     );
 }
@@ -6846,7 +6846,7 @@ fn test_cert_decompression_by_server_would_result_in_excessively_large_cert() {
         .key_provider
         .load_private_key(KeyType::Rsa2048.get_client_key())
         .unwrap();
-    let big_cert_and_key = sign::CertifiedKey::new(vec![big_cert], key);
+    let big_cert_and_key = sign::X509CertifiedKey::new(vec![big_cert], key);
     client_config.client_auth_cert_resolver = Arc::new(AlwaysResolves(big_cert_and_key.into()));
 
     let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
@@ -6863,14 +6863,14 @@ fn test_cert_decompression_by_server_would_result_in_excessively_large_cert() {
     );
 
     #[derive(Debug)]
-    struct AlwaysResolves(Arc<sign::CertifiedKey>);
+    struct AlwaysResolves(Arc<sign::X509CertifiedKey>);
 
     impl ResolvesClientCert for AlwaysResolves {
         fn resolve(
             &self,
             _root_hint_subjects: &[&[u8]],
             _sigschemes: &[SignatureScheme],
-        ) -> Option<Arc<sign::CertifiedKey>> {
+        ) -> Option<Arc<sign::X509CertifiedKey >> {
             Some(self.0.clone())
         }
 

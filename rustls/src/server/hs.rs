@@ -2,8 +2,8 @@ use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-
 use pki_types::DnsName;
+use std::vec;
 
 use super::server_conn::ServerConnectionData;
 #[cfg(feature = "tls12")]
@@ -19,12 +19,12 @@ use crate::error::{Error, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::{HandshakeHash, HandshakeHashBuffer};
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
-use crate::msgs::enums::{Compression, ExtensionType, NamedGroup};
+use crate::msgs::enums::{CertificateType, Compression, ExtensionType, NamedGroup};
 #[cfg(feature = "tls12")]
 use crate::msgs::handshake::SessionId;
 use crate::msgs::handshake::{
-    ClientHelloPayload, ConvertProtocolNameList, ConvertServerNameList, HandshakePayload,
-    KeyExchangeAlgorithm, Random, ServerExtension,
+    ClientExtension, ClientHelloPayload, ConvertProtocolNameList, ConvertServerNameList,
+    HandshakePayload, KeyExchangeAlgorithm, Random, ServerExtension,
 };
 use crate::msgs::message::{Message, MessagePayload};
 use crate::msgs::persist;
@@ -312,13 +312,43 @@ impl ExpectClientHello {
         sig_schemes
             .retain(|scheme| suites::compatible_sigscheme_for_suites(*scheme, &client_suites));
 
+        let negotiated_cert_type = if let Some(certificate_type_ext) =
+            client_hello.find_extension(ExtensionType::ServerCertificateType)
+        {
+            match certificate_type_ext {
+                ClientExtension::ServerCertificateType(client_wish) => {
+                    let negotiated = vec![CertificateType::Bikeshed, CertificateType::X509]
+                        .iter_mut()
+                        .find(|server_wish| client_wish.contains(server_wish))
+                        .cloned();
+                    negotiated.ok_or_else(|| {
+                        cx.common.send_fatal_alert(
+                            AlertDescription::NoCertificate,
+                            Error::General(
+                                "Cannot agree on either X509 or Bikeshed certificate".to_owned(),
+                            ),
+                        )
+                    })?
+                }
+
+                _ => Err(cx.common.send_fatal_alert(
+                    AlertDescription::DecodeError,
+                    Error::General("malformed CertificateType extension".to_owned()),
+                ))?,
+            }
+        } else {
+            CertificateType::X509
+        };
+
         // Choose a certificate.
+        // TODO @max: probably, we want to optionally choose the MTC certificates here
         let certkey = {
             let client_hello = ClientHello::new(
                 &cx.data.sni,
                 &sig_schemes,
                 client_hello.alpn_extension(),
                 &client_hello.cipher_suites,
+                negotiated_cert_type
             );
 
             let certkey = self
@@ -472,13 +502,13 @@ impl ExpectClientHello {
             .filter(|suite| {
                 // Reduce our supported ciphersuites by the certified key's algorithm.
                 suite.usable_for_signature_algorithm(sig_key_algorithm)
-                // And version
-                && suite.version().version == selected_version
-                // And protocol
-                && suite.usable_for_protocol(protocol)
-                // And support one of key exchange groups
-                && (ecdhe_possible && suite.usable_for_kx_algorithm(KeyExchangeAlgorithm::ECDHE)
-                || ffdhe_possible && suite.usable_for_kx_algorithm(KeyExchangeAlgorithm::DHE))
+                    // And version
+                    && suite.version().version == selected_version
+                    // And protocol
+                    && suite.usable_for_protocol(protocol)
+                    // And support one of key exchange groups
+                    && (ecdhe_possible && suite.usable_for_kx_algorithm(KeyExchangeAlgorithm::ECDHE)
+                    || ffdhe_possible && suite.usable_for_kx_algorithm(KeyExchangeAlgorithm::DHE))
             });
 
         // RFC 7919 (https://datatracker.ietf.org/doc/html/rfc7919#section-4) requires us to send

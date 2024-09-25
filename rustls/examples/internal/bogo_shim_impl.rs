@@ -403,7 +403,7 @@ struct FixedSignatureSchemeServerCertResolver {
 }
 
 impl server::ResolvesServerCert for FixedSignatureSchemeServerCertResolver {
-    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
+    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::X509CertifiedKey>> {
         let mut certkey = self.resolver.resolve(client_hello)?;
         Arc::make_mut(&mut certkey).key = Arc::new(FixedSignatureSchemeSigningKey {
             key: certkey.key.clone(),
@@ -424,7 +424,7 @@ impl client::ResolvesClientCert for FixedSignatureSchemeClientCertResolver {
         &self,
         root_hint_subjects: &[&[u8]],
         sigschemes: &[SignatureScheme],
-    ) -> Option<Arc<sign::CertifiedKey>> {
+    ) -> Option<Arc<sign::X509CertifiedKey>> {
         if !sigschemes.contains(&self.scheme) {
             quit(":NO_COMMON_SIGNATURE_ALGORITHMS:");
         }

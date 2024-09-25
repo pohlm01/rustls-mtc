@@ -177,7 +177,9 @@ impl AlwaysResolvesChain {
         private_key: Arc<dyn sign::SigningKey>,
         chain: CertificateChain<'static>,
     ) -> Self {
-        Self(Arc::new(sign::CertifiedKey::new(chain.0, private_key)))
+        Self(Arc::new(
+            sign::X509CertifiedKey::new(chain.0, private_key).into(),
+        ))
     }
 
     /// Creates an `AlwaysResolvesChain`, using the supplied key, certificate chain and OCSP response.
@@ -193,7 +195,10 @@ impl AlwaysResolvesChain {
         {
             let cert = Arc::make_mut(&mut r.0);
             if !ocsp.is_empty() {
-                cert.ocsp = Some(ocsp);
+                match cert {
+                    CertifiedKey::X509(cert) => cert.ocsp = Some(ocsp),
+                    _ => {}
+                }
             }
         }
 
@@ -241,7 +246,7 @@ mod sni_resolver {
         /// This function fails if `name` is not a valid DNS name, or if
         /// it's not valid for the supplied certificate, or if the certificate
         /// chain is syntactically faulty.
-        pub fn add(&mut self, name: &str, ck: sign::CertifiedKey) -> Result<(), Error> {
+        pub fn add(&mut self, name: &str, ck: sign::X509CertifiedKey) -> Result<(), Error> {
             let server_name = {
                 let checked_name = DnsName::try_from(name)
                     .map_err(|_| Error::General("Bad DNS name".into()))
@@ -264,7 +269,7 @@ mod sni_resolver {
 
             if let ServerName::DnsName(name) = server_name {
                 self.by_name
-                    .insert(name.as_ref().to_string(), Arc::new(ck));
+                    .insert(name.as_ref().to_string(), Arc::new(ck.into()));
             }
             Ok(())
         }
@@ -309,6 +314,54 @@ mod sni_resolver {
 
 #[cfg(any(feature = "std", feature = "hashbrown"))]
 pub use sni_resolver::ResolvesServerCertUsingSni;
+
+#[cfg(any(feature = "std", feature = "hashbrown"))]
+mod mtc_resolver {
+    use crate::hash_map::HashMap;
+    use crate::msgs::handshake::MtcTrustAnchor;
+    use crate::server;
+    use crate::server::ClientHello;
+    use crate::sign;
+    use crate::sign::SigningKey;
+    use alloc::sync::Arc;
+    use core::fmt::Debug;
+    use std::collections::BTreeMap;
+    use std::prelude::rust_2021::Box;
+    use crate::msgs::enums::CertificateType;
+
+    #[derive(Debug)]
+    pub struct ResolvesServerCertUsingMtcOrX509Sni {
+        x509fallback: Box<dyn server::ResolvesServerCert>,
+        by_trust_anchor: BTreeMap<MtcTrustAnchor, Arc<sign::CertifiedKey>>,
+    }
+
+    impl ResolvesServerCertUsingMtcOrX509Sni {
+        pub fn new(
+            x509fallback: Box<dyn server::ResolvesServerCert>,
+            by_trust_anchor: BTreeMap<MtcTrustAnchor, Arc<sign::CertifiedKey>>,
+        ) -> Self {
+            Self {
+                x509fallback,
+                by_trust_anchor,
+            }
+        }
+    }
+
+    impl server::ResolvesServerCert for ResolvesServerCertUsingMtcOrX509Sni {
+        fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
+            match client_hello.certificate_type() {
+                CertificateType::X509 => self.x509fallback.resolve(client_hello),
+                CertificateType::RawPublicKey => None,
+                CertificateType::Bikeshed => todo!("get bikeshed cert by it's trust anchor"),
+                CertificateType::Unknown(_) => None,
+            }
+        }
+    }
+}
+
+use crate::sign::CertifiedKey;
+#[cfg(any(feature = "std", feature = "hashbrown"))]
+pub use mtc_resolver::ResolvesServerCertUsingMtcOrX509Sni;
 
 #[cfg(test)]
 mod tests {

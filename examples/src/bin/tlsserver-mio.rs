@@ -509,7 +509,7 @@ fn lookup_versions(versions: &[String]) -> Vec<&'static rustls::SupportedProtoco
 
     for vname in versions {
         let version = match vname.as_ref() {
-            "1.2" => &rustls::version::TLS12,
+            // "1.2" => &rustls::version::TLS12,
             "1.3" => &rustls::version::TLS13,
             _ => panic!(
                 "cannot look up version '{}', valid are '1.2' and '1.3'",

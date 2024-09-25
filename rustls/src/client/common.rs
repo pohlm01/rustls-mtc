@@ -1,36 +1,55 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-
+use pki_types::CertificateDer;
 use super::ResolvesClientCert;
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::msgs::enums::ExtensionType;
-use crate::msgs::handshake::{CertificateChain, DistinguishedName, ServerExtension};
+use crate::msgs::handshake::{BikeshedCertificate, CertificateChain, CertificateEntry, CertificateEntryEnum, DistinguishedName, ServerExtension};
 use crate::{compress, sign, SignatureScheme};
 
 #[derive(Debug)]
-pub(super) struct ServerCertDetails<'a> {
-    pub(super) cert_chain: CertificateChain<'a>,
-    pub(super) ocsp_response: Vec<u8>,
+pub(super) enum ServerCertDetails<'a> {
+    X509 {
+        cert_chain: CertificateChain<'a>,
+        ocsp_response: Vec<u8>,
+    },
+    Bikeshed {
+        bikeshed: BikeshedCertificate,
+    },
 }
 
 impl<'a> ServerCertDetails<'a> {
-    pub(super) fn new(cert_chain: CertificateChain<'a>, ocsp_response: Vec<u8>) -> Self {
-        Self {
-            cert_chain,
-            ocsp_response,
+    pub(super) fn new(cert_entries: Vec<CertificateEntry<'a>>, ocsp_response: Vec<u8>) -> Self {
+        // TODO @max improve error handling
+        match &cert_entries.first().expect("Server must provide a certificate").cert {
+            CertificateEntryEnum::X509(_) =>  Self::X509 {
+                cert_chain: CertificateChain(cert_entries
+                    .into_iter()
+                    .map(|e| {
+                        match e.cert {
+                            CertificateEntryEnum::X509(c) => c.cert,
+                            CertificateEntryEnum::Bikeshed(_) => panic!("Encountered bikeshed certificate in a X509 certificate chain")
+                        }
+                    })
+                    .collect::<Vec<CertificateDer>>()),
+                ocsp_response,
+            },
+            CertificateEntryEnum::Bikeshed(bikeshed) => Self::Bikeshed { bikeshed: bikeshed.clone() }
         }
     }
 
     pub(super) fn into_owned(self) -> ServerCertDetails<'static> {
-        let Self {
-            cert_chain,
-            ocsp_response,
-        } = self;
-        ServerCertDetails {
-            cert_chain: cert_chain.into_owned(),
-            ocsp_response,
+        match self {
+            ServerCertDetails::X509 {
+                cert_chain,
+                ocsp_response,
+            } => ServerCertDetails::X509 {
+                cert_chain: cert_chain.into_owned(),
+                ocsp_response,
+            },
+            ServerCertDetails::Bikeshed { bikeshed } => ServerCertDetails::Bikeshed { bikeshed },
         }
     }
 }
@@ -95,7 +114,7 @@ impl ClientAuthDetails {
             .collect::<Vec<&[u8]>>();
 
         if let Some(certkey) = resolver.resolve(&acceptable_issuers, sigschemes) {
-            if let Some(signer) = certkey.key.choose_scheme(sigschemes) {
+            if let Some(signer) = certkey.key().choose_scheme(sigschemes) {
                 debug!("Attempting client auth");
                 return Self::Verify {
                     certkey,

@@ -3,12 +3,11 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-pub(super) use client_hello::CompleteClientHelloHandling;
 use pki_types::{CertificateDer, UnixTime};
 use subtle::ConstantTimeEq;
 
-use super::hs::{self, HandshakeHashOrBuffer, ServerContext};
-use super::server_conn::ServerConnectionData;
+pub(super) use client_hello::CompleteClientHelloHandling;
+
 use crate::check::{inappropriate_handshake_message, inappropriate_message};
 use crate::common_state::{CommonState, HandshakeKind, Protocol, Side, State};
 use crate::conn::ConnectionRandoms;
@@ -16,15 +15,16 @@ use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion
 use crate::error::{Error, InvalidMessage, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHash;
 #[cfg(feature = "logging")]
-use crate::log::{debug, trace, warn};
+use crate::log::{debug, trace, warn, error};
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::KeyUpdateRequest;
 use crate::msgs::handshake::{
-    CertificateChain, CertificatePayloadTls13, HandshakeMessagePayload, HandshakePayload,
-    NewSessionTicketExtension, NewSessionTicketPayloadTls13, CERTIFICATE_MAX_SIZE_LIMIT,
+    CertificateChain, CertificateEntry, CertificatePayloadTls13, HandshakeMessagePayload,
+    HandshakePayload, NewSessionTicketExtension, NewSessionTicketPayloadTls13,
+    CERTIFICATE_MAX_SIZE_LIMIT,
 };
 use crate::msgs::message::{Message, MessagePayload};
-use crate::msgs::persist;
+use crate::msgs::{handshake, persist};
 use crate::server::ServerConfig;
 use crate::suites::PartiallyExtractedSecrets;
 use crate::tls13::key_schedule::{KeyScheduleTraffic, KeyScheduleTrafficWithClientFinishedPending};
@@ -33,14 +33,19 @@ use crate::tls13::{
 };
 use crate::{compress, rand, verify};
 
+use super::hs::{self, HandshakeHashOrBuffer, ServerContext};
+use super::server_conn::ServerConnectionData;
+
 mod client_hello {
-    use super::*;
+    use log::error;
+
     use crate::compress::CertCompressor;
+    use crate::crypto::signer::X509OrBikeshedCertChain;
     use crate::crypto::SupportedKxGroup;
     use crate::enums::SignatureScheme;
     use crate::msgs::base::{Payload, PayloadU8};
     use crate::msgs::ccs::ChangeCipherSpecPayload;
-    use crate::msgs::enums::{Compression, NamedGroup, PSKKeyExchangeMode};
+    use crate::msgs::enums::{CertificateType, Compression, NamedGroup, PSKKeyExchangeMode};
     use crate::msgs::handshake::{
         CertReqExtension, CertificatePayloadTls13, CertificateRequestPayloadTls13,
         ClientHelloPayload, HelloRetryExtension, HelloRetryRequest, KeyShareEntry, Random,
@@ -52,6 +57,8 @@ mod client_hello {
         KeyScheduleEarly, KeyScheduleHandshake, KeySchedulePreHandshake,
     };
     use crate::verify::DigitallySignedStruct;
+
+    use super::*;
 
     #[derive(PartialEq)]
     pub(super) enum EarlyDataDecision {
@@ -356,11 +363,26 @@ mod client_hello {
             }
 
             let mut ocsp_response = server_key.get_ocsp();
+
+            let agreed_cert_type = if let Some(cert_types) = client_hello.server_certificate_type_extension() {
+                // TODO @max make this configurable
+                vec![CertificateType::Bikeshed, CertificateType::X509]
+                    .into_iter()
+                    .find(|server_preference| {
+                        cert_types
+                            .into_iter()
+                            .any(|client_preference| client_preference == server_preference)
+                    })
+            } else {
+                None
+            };
+            
             let doing_early_data = emit_encrypted_extensions(
                 &mut self.transcript,
                 self.suite,
                 cx,
                 &mut ocsp_response,
+                agreed_cert_type,
                 client_hello,
                 resumedata.as_ref(),
                 self.extra_exts,
@@ -675,6 +697,7 @@ mod client_hello {
         suite: &'static Tls13CipherSuite,
         cx: &mut ServerContext<'_>,
         ocsp_response: &mut Option<&[u8]>,
+        agreed_cert_type: Option<CertificateType>,
         hello: &ClientHelloPayload,
         resumedata: Option<&persist::ServerSessionValue>,
         extra_exts: Vec<ServerExtension>,
@@ -686,6 +709,10 @@ mod client_hello {
         let early_data = decide_if_early_data_allowed(cx, hello, resumedata, suite, config);
         if early_data == EarlyDataDecision::Accepted {
             ep.exts.push(ServerExtension::EarlyData);
+        }
+
+        if let Some(cert_type) = agreed_cert_type {
+            ep.exts.push(ServerExtension::ServerCertificateType(cert_type));
         }
 
         let ee = Message {
@@ -756,10 +783,10 @@ mod client_hello {
     fn emit_certificate_tls13(
         transcript: &mut HandshakeHash,
         common: &mut CommonState,
-        cert_chain: &[CertificateDer<'static>],
+        certs: X509OrBikeshedCertChain,
         ocsp_response: Option<&[u8]>,
     ) {
-        let cert_body = CertificatePayloadTls13::new(cert_chain.iter(), ocsp_response);
+        let cert_body = CertificatePayloadTls13::new(certs, ocsp_response);
         let c = Message {
             version: ProtocolVersion::TLSv1_3,
             payload: MessagePayload::handshake(HandshakeMessagePayload {
@@ -777,18 +804,18 @@ mod client_hello {
         transcript: &mut HandshakeHash,
         common: &mut CommonState,
         config: &ServerConfig,
-        cert_chain: &[CertificateDer<'static>],
+        certs: X509OrBikeshedCertChain,
         ocsp_response: Option<&[u8]>,
         cert_compressor: &'static dyn CertCompressor,
     ) {
-        let payload = CertificatePayloadTls13::new(cert_chain.iter(), ocsp_response);
+        let payload = CertificatePayloadTls13::new(certs.clone(), ocsp_response);
 
         let entry = match config
             .cert_compression_cache
             .compression_for(cert_compressor, &payload)
         {
             Ok(entry) => entry,
-            Err(_) => return emit_certificate_tls13(transcript, common, cert_chain, ocsp_response),
+            Err(_) => return emit_certificate_tls13(transcript, common, certs, ocsp_response),
         };
 
         let c = Message {
@@ -1100,7 +1127,8 @@ impl State<ServerConnectionData> for ExpectCertificate {
             m,
             HandshakeType::Certificate,
             HandshakePayload::CertificateTls13
-        )?;
+        )?
+        .into_owned(); // TODO @max get rid of `into_owned()`
 
         // We don't send any CertificateRequest extensions, so any extensions
         // here are illegal.
@@ -1108,6 +1136,7 @@ impl State<ServerConnectionData> for ExpectCertificate {
             return Err(PeerMisbehaved::UnsolicitedCertExtension.into());
         }
 
+        // TODO @max client certificates are currently not supported
         let client_cert = certp.into_certificate_chain();
 
         let mandatory = self
@@ -1152,7 +1181,7 @@ impl State<ServerConnectionData> for ExpectCertificate {
             suite: self.suite,
             transcript: self.transcript,
             key_schedule: self.key_schedule,
-            client_cert: client_cert.into_owned(),
+            client_cert,
             send_tickets: self.send_tickets,
         }))
     }

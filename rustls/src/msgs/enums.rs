@@ -96,6 +96,8 @@ enum_builder! {
         Heartbeat => 0x000f,
         ALProtocolNegotiation => 0x0010,
         SCT => 0x0012,
+        ClientCertificateType => 0x0013, // RFC 7250 (Raw public keys)
+        ServerCertificateType => 0x0014, // RFC 7250 (Raw public keys)
         Padding => 0x0015,
         ExtendedMasterSecret => 0x0017,
         CompressCertificate => 0x001b,
@@ -117,6 +119,47 @@ enum_builder! {
         RenegotiationInfo => 0xff01,
         TransportParametersDraft => 0xffa5,
         EncryptedClientHello => 0xfe0d, // https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#section-11.1
+    }
+}
+
+enum_builder! {
+    /// The `BikeshedProofType` reflects the 'Proof Type' from the draft RFC 
+    /// 'draft-davidben-tls-merkle-tree-certs'
+    @U16
+    pub(crate) enum BikeshedProofType {
+        MerkleTreeSha256 => 0,
+    }
+}
+
+enum_builder! {
+    /// The `ClaimType` reflects the different cain types that can be part of an assertion from the
+    /// draft RFC 'draft-davidben-tls-merkle-tree-certs'
+    @U16
+    pub(crate) enum ClaimType {
+        Dns => 0,
+        DnsWildcard => 1,
+        Ipv4 => 2,
+        Ipv6 => 3,
+    }
+}
+
+enum_builder! {
+    /// The `SubjectType` reflects the enum as part of an assertion from the draft RFC
+    /// 'draft-davidben-tls-merkle-tree-certs'
+    @U16
+    pub(crate) enum SubjectType {
+        Tls => 0,
+    }
+}
+
+enum_builder! {
+
+    @U8
+    pub(crate) enum CertificateType {
+        X509 => 0x00,
+        RawPublicKey => 0x02,
+        // TODO replace with correct enum value
+        Bikeshed => 0xe0, // 224
     }
 }
 

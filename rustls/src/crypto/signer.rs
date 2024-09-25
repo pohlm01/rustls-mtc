@@ -7,6 +7,7 @@ use pki_types::CertificateDer;
 
 use crate::enums::{SignatureAlgorithm, SignatureScheme};
 use crate::error::Error;
+use crate::msgs::handshake::BikeshedCertificate;
 
 /// An abstract signing key.
 ///
@@ -35,7 +36,7 @@ use crate::error::Error;
 /// [`ConfigBuilder::with_single_cert_with_ocsp()`].
 ///
 /// A signing key created outside of the `KeyProvider` extension trait can be used
-/// to create a [`CertifiedKey`], which in turn can be used to create a
+/// to create a [`X509CertifiedKey`], which in turn can be used to create a
 /// [`ResolvesServerCertUsingSni`]. Alternately, a `CertifiedKey` can be returned from a
 /// custom implementation of the [`ResolvesServerCert`] or [`ResolvesClientCert`] traits.
 ///
@@ -77,10 +78,64 @@ pub trait Signer: Debug + Send + Sync {
     fn scheme(&self) -> SignatureScheme;
 }
 
+#[derive(Clone, Debug)]
+pub enum CertifiedKey {
+    Mtc(MtcCertifiedKey),
+    X509(X509CertifiedKey),
+}
+
+impl CertifiedKey {
+    pub(crate) fn key(&self) -> &dyn SigningKey {
+        match self {
+            CertifiedKey::Mtc(c) => &*c.key,
+            CertifiedKey::X509(c) => &*c.key,
+        }
+    }
+
+    pub(crate) fn cert(&self) -> X509OrBikeshedCertChain {
+        match self {
+            CertifiedKey::Mtc(c) => X509OrBikeshedCertChain::Bikeshed(&c.cert),
+            CertifiedKey::X509(c) => X509OrBikeshedCertChain::X509(&c.cert),
+        }
+    }
+}
+
+impl From<MtcCertifiedKey> for CertifiedKey {
+    fn from(value: MtcCertifiedKey) -> Self {
+        Self::Mtc(value)
+    }
+}
+
+impl From<X509CertifiedKey> for CertifiedKey {
+    fn from(value: X509CertifiedKey) -> Self {
+        Self::X509(value)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MtcCertifiedKey {
+    pub cert: BikeshedCertificate,
+
+    pub key: Arc<dyn SigningKey>,
+}
+
+/// Contains either a X509 certificate chain or a Bikeshed certificate (which does not need a chain)
+#[derive(Debug, Clone)]
+pub enum X509OrBikeshedCertChain<'a> {
+    X509(&'a [CertificateDer<'static>]),
+    Bikeshed(&'a BikeshedCertificate),
+}
+
+impl Default for X509OrBikeshedCertChain<'static> {
+    fn default() -> Self {
+        Self::X509(&[])
+    }
+}
+
 /// A packaged-together certificate chain, matching `SigningKey` and
 /// optional stapled OCSP response.
 #[derive(Clone, Debug)]
-pub struct CertifiedKey {
+pub struct X509CertifiedKey {
     /// The certificate chain.
     pub cert: Vec<CertificateDer<'static>>,
 
@@ -92,7 +147,7 @@ pub struct CertifiedKey {
     pub ocsp: Option<Vec<u8>>,
 }
 
-impl CertifiedKey {
+impl X509CertifiedKey {
     /// Make a new CertifiedKey, with the given chain and key.
     ///
     /// The cert chain must not be empty. The first certificate in the chain

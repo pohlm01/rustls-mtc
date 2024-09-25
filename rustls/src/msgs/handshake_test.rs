@@ -1,22 +1,21 @@
-use std::prelude::v1::*;
 use std::{format, println, vec};
+use std::prelude::v1::*;
 
 use pki_types::{CertificateDer, DnsName};
 
-use super::handshake::{ServerDhParams, ServerKeyExchange, ServerKeyExchangeParams};
 use crate::enums::{
     CertificateCompressionAlgorithm, CipherSuite, HandshakeType, ProtocolVersion, SignatureScheme,
 };
 use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
-use crate::msgs::codec::{put_u16, Codec, Reader};
+use crate::msgs::codec::{Codec, put_u16, Reader};
 use crate::msgs::enums::{
     ClientCertificateType, Compression, ECCurveType, ECPointFormat, ExtensionType,
     KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType,
 };
 use crate::msgs::handshake::{
-    CertReqExtension, CertificateChain, CertificateEntry, CertificateExtension,
-    CertificatePayloadTls13, CertificateRequestPayload, CertificateRequestPayloadTls13,
-    CertificateStatus, CertificateStatusRequest, ClientExtension, ClientHelloPayload,
+    CertificateChain, CertificateEntry, CertificateExtension, CertificatePayloadTls13,
+    CertificateRequestPayload, CertificateRequestPayloadTls13, CertificateStatus,
+    CertificateStatusRequest, CertReqExtension, ClientExtension, ClientHelloPayload,
     ClientSessionTicket, CompressedCertificatePayload, ConvertProtocolNameList,
     ConvertServerNameList, DistinguishedName, EcParameters, HandshakeMessagePayload,
     HandshakePayload, HasServerExtensions, HelloRetryExtension, HelloRetryRequest, KeyShareEntry,
@@ -26,6 +25,8 @@ use crate::msgs::handshake::{
     UnknownExtension,
 };
 use crate::verify::DigitallySignedStruct;
+
+use super::handshake::{ServerDhParams, ServerKeyExchange, ServerKeyExchangeParams, X509CertificateEntry};
 
 #[test]
 fn rejects_short_random() {
@@ -685,7 +686,7 @@ fn cert_entry_ocsp_response() {
     });
 }
 
-fn test_cert_extension_getter(typ: ExtensionType, getter: fn(&CertificateEntry) -> bool) {
+fn test_cert_extension_getter(typ: ExtensionType, getter: fn(&X509CertificateEntry) -> bool) {
     let mut ce = sample_certificate_payload_tls13()
         .entries
         .remove(0);
@@ -770,9 +771,9 @@ fn can_detect_truncation_of_all_tls12_handshake_payloads() {
 
             assert!(HandshakeMessagePayload::read_version(
                 &mut Reader::init(&enc),
-                ProtocolVersion::TLSv1_2
+                ProtocolVersion::TLSv1_2,
             )
-            .is_err());
+                .is_err());
             assert!(HandshakeMessagePayload::read_bytes(&enc).is_err());
         }
     }
@@ -834,9 +835,9 @@ fn can_detect_truncation_of_all_tls13_handshake_payloads() {
 
             assert!(HandshakeMessagePayload::read_version(
                 &mut Reader::init(&enc),
-                ProtocolVersion::TLSv1_3
+                ProtocolVersion::TLSv1_3,
             )
-            .is_err());
+                .is_err());
         }
     }
 }
@@ -1168,7 +1169,7 @@ fn all_tls13_handshake_payloads() -> Vec<HandshakeMessagePayload<'static>> {
 fn sample_certificate_payload_tls13() -> CertificatePayloadTls13<'static> {
     CertificatePayloadTls13 {
         context: PayloadU8(vec![1, 2, 3]),
-        entries: vec![CertificateEntry {
+        entries: vec![X509CertificateEntry {
             cert: CertificateDer::from(vec![3, 4, 5]),
             exts: vec![
                 CertificateExtension::CertificateStatus(CertificateStatus {
