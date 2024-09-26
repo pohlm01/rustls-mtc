@@ -557,7 +557,7 @@ pub enum ClientExtension {
     CertificateCompressionAlgorithms(Vec<CertificateCompressionAlgorithm>),
     EncryptedClientHello(EncryptedClientHello),
     EncryptedClientHelloOuterExtensions(Vec<ExtensionType>),
-    
+
     // RFC 7250 (Raw Public Keys)
     ServerCertificateType(Vec<CertificateType>),
     ClientCertificateType(Vec<CertificateType>),
@@ -1579,7 +1579,7 @@ impl<'a> TlsListElement for CertificateExtension<'a> {
 
 #[derive(Debug)]
 pub(crate) struct CertificateEntry<'a> {
-    pub(crate) cert: CertificateDer<'a>,
+    pub(crate) cert: PayloadU24<'a>,
     pub(crate) exts: Vec<CertificateExtension<'a>>,
 }
 
@@ -1591,16 +1591,16 @@ impl<'a> Codec<'a> for CertificateEntry<'a> {
 
     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
         Ok(Self {
-            cert: CertificateDer::read(r)?,
+            cert: PayloadU24::read(r)?,
             exts: Vec::read(r)?,
         })
     }
 }
 
 impl<'a> CertificateEntry<'a> {
-    pub(crate) fn new(cert: CertificateDer<'a>) -> Self {
+    pub(crate) fn new(cert: Vec<u8>) -> Self {
         Self {
-            cert,
+            cert: PayloadU24(Payload::Owned(cert)),
             exts: Vec::new(),
         }
     }
@@ -1682,7 +1682,7 @@ impl<'a> CertificatePayloadTls13<'a> {
                         .chain(iter::repeat(None)),
                 )
                 .map(|(cert, ocsp)| {
-                    let mut e = CertificateEntry::new(cert.clone());
+                    let mut e = CertificateEntry::new(cert.to_vec());
                     if let Some(ocsp) = ocsp {
                         e.exts
                             .push(CertificateExtension::CertificateStatus(
@@ -1748,7 +1748,7 @@ impl<'a> CertificatePayloadTls13<'a> {
         CertificateChain(
             self.entries
                 .into_iter()
-                .map(|e| e.cert)
+                .map(|e| CertificateDer::from(e.cert.0.into_vec()))
                 .collect(),
         )
     }
