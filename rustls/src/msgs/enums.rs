@@ -96,6 +96,8 @@ enum_builder! {
         Heartbeat => 0x000f,
         ALProtocolNegotiation => 0x0010,
         SCT => 0x0012,
+        ClientCertificateType => 0x0013, // RFC 7250 (Raw public keys)
+        ServerCertificateType => 0x0014, // RFC 7250 (Raw public keys)
         Padding => 0x0015,
         ExtendedMasterSecret => 0x0017,
         CompressCertificate => 0x001b,
@@ -146,6 +148,17 @@ impl ExtensionType {
                 | Self::KeyShare
                 | Self::PSKKeyExchangeModes
         )
+    }
+}
+
+enum_builder! {
+
+    @U8
+    pub(crate) enum CertificateType {
+        X509 => 0x00,
+        RawPublicKey => 0x02,
+        // TODO replace with correct enum value
+        Bikeshed => 0xe0, // 224
     }
 }
 

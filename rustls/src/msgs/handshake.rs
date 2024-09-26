@@ -22,11 +22,7 @@ use crate::ffdhe_groups::FfdheGroup;
 use crate::log::warn;
 use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
 use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, TlsListElement};
-use crate::msgs::enums::{
-    CertificateStatusType, ClientCertificateType, Compression, ECCurveType, ECPointFormat,
-    EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup,
-    PSKKeyExchangeMode, ServerNameType,
-};
+use crate::msgs::enums::{CertificateStatusType, CertificateType, ClientCertificateType, Compression, ECCurveType, ECPointFormat, EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType};
 use crate::rand;
 use crate::verify::DigitallySignedStruct;
 use crate::x509::wrap_in_sequence;
@@ -561,7 +557,16 @@ pub enum ClientExtension {
     CertificateCompressionAlgorithms(Vec<CertificateCompressionAlgorithm>),
     EncryptedClientHello(EncryptedClientHello),
     EncryptedClientHelloOuterExtensions(Vec<ExtensionType>),
+    
+    // RFC 7250 (Raw Public Keys)
+    ServerCertificateType(Vec<CertificateType>),
+    ClientCertificateType(Vec<CertificateType>),
+
     Unknown(UnknownExtension),
+}
+
+impl TlsListElement for CertificateType {
+    const SIZE_LEN: ListLength = ListLength::U8;
 }
 
 impl ClientExtension {
@@ -588,6 +593,8 @@ impl ClientExtension {
             Self::EncryptedClientHelloOuterExtensions(_) => {
                 ExtensionType::EncryptedClientHelloOuterExtensions
             }
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -620,6 +627,9 @@ impl Codec<'_> for ClientExtension {
             Self::CertificateCompressionAlgorithms(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHelloOuterExtensions(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
+                r.encode(nested.buf)
+            }
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -665,6 +675,12 @@ impl Codec<'_> for ClientExtension {
             }
             ExtensionType::EncryptedClientHelloOuterExtensions => {
                 Self::EncryptedClientHelloOuterExtensions(Vec::read(&mut sub)?)
+            }
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertificateType(Vec::read(&mut sub)?)
+            }
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertificateType(Vec::read(&mut sub)?)
             }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
@@ -723,6 +739,11 @@ pub enum ServerExtension {
     TransportParametersDraft(Vec<u8>),
     EarlyData,
     EncryptedClientHello(ServerEncryptedClientHello),
+
+    // RFC 7250 (Raw Public Keys)
+    ServerCertificateType(CertificateType),
+    ClientCertificateType(CertificateType),
+
     Unknown(UnknownExtension),
 }
 
@@ -743,6 +764,8 @@ impl ServerExtension {
             Self::TransportParametersDraft(_) => ExtensionType::TransportParametersDraft,
             Self::EarlyData => ExtensionType::EarlyData,
             Self::EncryptedClientHello(_) => ExtensionType::EncryptedClientHello,
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -769,6 +792,9 @@ impl Codec<'_> for ServerExtension {
                 nested.buf.extend_from_slice(r);
             }
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
+                r.encode(nested.buf)
+            }
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -798,6 +824,12 @@ impl Codec<'_> for ServerExtension {
             ExtensionType::EarlyData => Self::EarlyData,
             ExtensionType::EncryptedClientHello => {
                 Self::EncryptedClientHello(ServerEncryptedClientHello::read(&mut sub)?)
+            }
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertificateType(CertificateType::read(&mut sub)?)
+            }
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertificateType(CertificateType::read(&mut sub)?)
             }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
@@ -1104,6 +1136,22 @@ impl ClientHelloPayload {
         let ext = self.find_extension(ExtensionType::CompressCertificate)?;
         match *ext {
             ClientExtension::CertificateCompressionAlgorithms(ref algs) => Some(algs),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn server_certificate_type_extension(&self) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match *ext {
+            ClientExtension::ServerCertificateType(ref types) => Some(types),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn client_certificate_type_extension(&self) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
+        match *ext {
+            ClientExtension::ClientCertificateType(ref types) => Some(types),
             _ => None,
         }
     }
@@ -1461,6 +1509,8 @@ pub(crate) const CERTIFICATE_MAX_SIZE_LIMIT: usize = 0x1_0000;
 #[derive(Debug)]
 pub(crate) enum CertificateExtension<'a> {
     CertificateStatus(CertificateStatus<'a>),
+    // TODO @max add support for client certificate type
+    ServerCertificateType(CertificateType),
     Unknown(UnknownExtension),
 }
 
@@ -1468,6 +1518,7 @@ impl<'a> CertificateExtension<'a> {
     pub(crate) fn ext_type(&self) -> ExtensionType {
         match *self {
             Self::CertificateStatus(_) => ExtensionType::StatusRequest,
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -1482,6 +1533,7 @@ impl<'a> CertificateExtension<'a> {
     pub(crate) fn into_owned(self) -> CertificateExtension<'static> {
         match self {
             Self::CertificateStatus(st) => CertificateExtension::CertificateStatus(st.into_owned()),
+            Self::ServerCertificateType(sct) => CertificateExtension::ServerCertificateType(sct),
             Self::Unknown(unk) => CertificateExtension::Unknown(unk),
         }
     }
@@ -1494,6 +1546,7 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
         let nested = LengthPrefixedBuffer::new(ListLength::U16, bytes);
         match *self {
             Self::CertificateStatus(ref r) => r.encode(nested.buf),
+            Self::ServerCertificateType(r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -1507,6 +1560,10 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
             ExtensionType::StatusRequest => {
                 let st = CertificateStatus::read(&mut sub)?;
                 Self::CertificateStatus(st)
+            }
+            ExtensionType::ServerCertificateType => {
+                let sct = CertificateType::read(&mut sub)?;
+                Self::ServerCertificateType(sct)
             }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
