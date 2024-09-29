@@ -41,7 +41,7 @@ mod client_hello {
     use crate::enums::SignatureScheme;
     use crate::msgs::base::{Payload, PayloadU8};
     use crate::msgs::ccs::ChangeCipherSpecPayload;
-    use crate::msgs::enums::{Compression, NamedGroup, PSKKeyExchangeMode};
+    use crate::msgs::enums::{CertificateType, Compression, NamedGroup, PSKKeyExchangeMode};
     use crate::msgs::handshake::{
         CertReqExtension, CertificatePayloadTls13, CertificateRequestPayloadTls13,
         ClientHelloPayload, HelloRetryExtension, HelloRetryRequest, KeyShareEntry, Random,
@@ -372,16 +372,23 @@ mod client_hello {
             let doing_client_auth = if full_handshake {
                 let client_auth = emit_certificate_req_tls13(&mut flight, &self.config)?;
 
+                let payload = match cx.common.certificate_type {
+                    CertificateType::X509 => CertificatePayloadTls13::from_x509_certificates(
+                        server_key.get_cert().iter(),
+                        ocsp_response,
+                    ),
+                    CertificateType::Bikeshed => todo!(),
+                    _ => todo!(),
+                };
                 if let Some(compressor) = cert_compressor {
                     emit_compressed_certificate_tls13(
                         &mut flight,
                         &self.config,
-                        server_key.get_cert(),
-                        ocsp_response,
+                        payload,
                         compressor,
                     );
                 } else {
-                    emit_certificate_tls13(&mut flight, server_key.get_cert(), ocsp_response);
+                    emit_certificate_tls13(&mut flight, payload);
                 }
                 emit_certificate_verify_tls13(
                     &mut flight,
@@ -737,15 +744,11 @@ mod client_hello {
 
     fn emit_certificate_tls13(
         flight: &mut HandshakeFlightTls13<'_>,
-        cert_chain: &[CertificateDer<'static>],
-        ocsp_response: Option<&[u8]>,
+        payload: CertificatePayloadTls13<'_>,
     ) {
         let cert = HandshakeMessagePayload {
             typ: HandshakeType::Certificate,
-            payload: HandshakePayload::CertificateTls13(CertificatePayloadTls13::new(
-                cert_chain.iter(),
-                ocsp_response,
-            )),
+            payload: HandshakePayload::CertificateTls13(payload),
         };
 
         trace!("sending certificate {:?}", cert);
@@ -755,18 +758,15 @@ mod client_hello {
     fn emit_compressed_certificate_tls13(
         flight: &mut HandshakeFlightTls13<'_>,
         config: &ServerConfig,
-        cert_chain: &[CertificateDer<'static>],
-        ocsp_response: Option<&[u8]>,
+        payload: CertificatePayloadTls13<'_>,
         cert_compressor: &'static dyn CertCompressor,
     ) {
-        let payload = CertificatePayloadTls13::new(cert_chain.iter(), ocsp_response);
-
         let entry = match config
             .cert_compression_cache
             .compression_for(cert_compressor, &payload)
         {
             Ok(entry) => entry,
-            Err(_) => return emit_certificate_tls13(flight, cert_chain, ocsp_response),
+            Err(_) => return emit_certificate_tls13(flight, payload),
         };
 
         let c = HandshakeMessagePayload {

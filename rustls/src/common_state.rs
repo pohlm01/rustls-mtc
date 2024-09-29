@@ -11,7 +11,7 @@ use crate::log::{debug, error, warn};
 use crate::msgs::alert::AlertMessagePayload;
 use crate::msgs::base::Payload;
 use crate::msgs::codec::Codec;
-use crate::msgs::enums::{AlertLevel, KeyUpdateRequest};
+use crate::msgs::enums::{AlertLevel, CertificateType, KeyUpdateRequest};
 use crate::msgs::fragmenter::MessageFragmenter;
 use crate::msgs::handshake::{CertificateChain, HandshakeMessagePayload};
 use crate::msgs::message::{
@@ -50,6 +50,8 @@ pub struct CommonState {
     pub(crate) sendable_tls: ChunkVecBuffer,
     queued_key_update_message: Option<Vec<u8>>,
 
+    pub(crate) certificate_type: CertificateType,
+
     /// Protocol whose key schedule should be used. Unused for TLS < 1.3.
     pub(crate) protocol: Protocol,
     pub(crate) quic: quic::Quic,
@@ -81,6 +83,7 @@ impl CommonState {
             received_plaintext: ChunkVecBuffer::new(Some(DEFAULT_RECEIVED_PLAINTEXT_LIMIT)),
             sendable_tls: ChunkVecBuffer::new(Some(DEFAULT_BUFFER_LIMIT)),
             queued_key_update_message: None,
+            certificate_type: CertificateType::X509,
             protocol: Protocol::Tcp,
             quic: quic::Quic::default(),
             enable_secret_extraction: false,

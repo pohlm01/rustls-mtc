@@ -1163,7 +1163,8 @@ fn emit_compressed_certificate_tls13(
     compressor: &dyn compress::CertCompressor,
     config: &ClientConfig,
 ) {
-    let mut cert_payload = CertificatePayloadTls13::new(certkey.cert.iter(), None);
+    let mut cert_payload =
+        CertificatePayloadTls13::from_x509_certificates(certkey.cert.iter(), None);
     cert_payload.context = PayloadU8::new(auth_context.clone().unwrap_or_default());
 
     let compressed = match config
@@ -1188,7 +1189,7 @@ fn emit_certificate_tls13(
     let certs = certkey
         .map(|ck| ck.cert.as_ref())
         .unwrap_or(&[][..]);
-    let mut cert_payload = CertificatePayloadTls13::new(certs.iter(), None);
+    let mut cert_payload = CertificatePayloadTls13::from_x509_certificates(certs.iter(), None);
     cert_payload.context = PayloadU8::new(auth_context.unwrap_or_default());
 
     flight.add(HandshakeMessagePayload {

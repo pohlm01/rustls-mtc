@@ -23,7 +23,10 @@ use crate::enums::{CipherSuite, ProtocolVersion, SignatureScheme};
 use crate::error::Error;
 use crate::log::trace;
 use crate::msgs::base::Payload;
-use crate::msgs::handshake::{ClientHelloPayload, ProtocolName, ServerExtension};
+use crate::msgs::enums::CertificateType;
+use crate::msgs::handshake::{
+    ClientHelloPayload, ProtocolName, ServerExtension, TrustAnchorIdentifier,
+};
 use crate::msgs::message::Message;
 #[cfg(feature = "std")]
 use crate::time_provider::DefaultTimeProvider;
@@ -127,6 +130,9 @@ pub struct ClientHello<'a> {
     signature_schemes: &'a [SignatureScheme],
     alpn: Option<&'a Vec<ProtocolName>>,
     cipher_suites: &'a [CipherSuite],
+    supported_server_certificate_types: &'a [CertificateType],
+    supported_client_certificate_types: &'a [CertificateType],
+    supported_trust_anchors: Option<&'a [TrustAnchorIdentifier]>,
 }
 
 impl<'a> ClientHello<'a> {
@@ -136,17 +142,32 @@ impl<'a> ClientHello<'a> {
         signature_schemes: &'a [SignatureScheme],
         alpn: Option<&'a Vec<ProtocolName>>,
         cipher_suites: &'a [CipherSuite],
+        supported_server_certificate_types: &'a [CertificateType],
+        supported_client_certificate_types: &'a [CertificateType],
+        supported_trust_anchors: Option<&'a [TrustAnchorIdentifier]>,
     ) -> Self {
         trace!("sni {:?}", server_name);
         trace!("sig schemes {:?}", signature_schemes);
         trace!("alpn protocols {:?}", alpn);
         trace!("cipher suites {:?}", cipher_suites);
+        trace!(
+            "supported server certificate types {:?}",
+            supported_server_certificate_types
+        );
+        trace!(
+            "supported client certificate types {:?}",
+            supported_client_certificate_types
+        );
+        trace!("supported trust anchors {:?}", supported_trust_anchors);
 
         ClientHello {
             server_name,
             signature_schemes,
             alpn,
             cipher_suites,
+            supported_server_certificate_types,
+            supported_client_certificate_types,
+            supported_trust_anchors,
         }
     }
 
@@ -370,6 +391,8 @@ pub struct ServerConfig {
     ///
     /// [RFC8779]: https://datatracker.ietf.org/doc/rfc8879/
     pub cert_decompressors: Vec<&'static dyn compress::CertDecompressor>,
+
+    pub supported_server_certificate_types: Vec<CertificateType>,
 }
 
 impl ServerConfig {
@@ -907,6 +930,13 @@ impl Accepted {
             &self.sig_schemes,
             payload.alpn_extension(),
             &payload.cipher_suites,
+            payload
+                .server_certificate_type_extension()
+                .unwrap_or(&[CertificateType::X509]),
+            payload
+                .client_certificate_type_extension()
+                .unwrap_or(&[CertificateType::X509]),
+            payload.trust_anchors_extension(),
         )
     }
 

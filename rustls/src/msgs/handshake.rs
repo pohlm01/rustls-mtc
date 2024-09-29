@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use core::ops::Deref;
 use core::{fmt, iter};
 
+use mtc_verifier::Certificate as BikeshedCertificate;
 use pki_types::{CertificateDer, DnsName};
 
 #[cfg(feature = "tls12")]
@@ -22,7 +23,11 @@ use crate::ffdhe_groups::FfdheGroup;
 use crate::log::warn;
 use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
 use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, TlsListElement};
-use crate::msgs::enums::{CertificateStatusType, CertificateType, ClientCertificateType, Compression, ECCurveType, ECPointFormat, EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup, PSKKeyExchangeMode, ServerNameType};
+use crate::msgs::enums::{
+    CertificateStatusType, CertificateType, ClientCertificateType, Compression, ECCurveType,
+    ECPointFormat, EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest,
+    NamedGroup, PSKKeyExchangeMode, ServerNameType,
+};
 use crate::rand;
 use crate::verify::DigitallySignedStruct;
 use crate::x509::wrap_in_sequence;
@@ -562,6 +567,8 @@ pub enum ClientExtension {
     ServerCertificateType(Vec<CertificateType>),
     ClientCertificateType(Vec<CertificateType>),
 
+    TrustAnchors(Vec<TrustAnchorIdentifier>),
+
     Unknown(UnknownExtension),
 }
 
@@ -595,6 +602,7 @@ impl ClientExtension {
             }
             Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
             Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
+            Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -630,6 +638,7 @@ impl Codec<'_> for ClientExtension {
             Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
                 r.encode(nested.buf)
             }
+            Self::TrustAnchors(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -682,6 +691,7 @@ impl Codec<'_> for ClientExtension {
             ExtensionType::ClientCertificateType => {
                 Self::ClientCertificateType(Vec::read(&mut sub)?)
             }
+            ExtensionType::TrustAnchors => Self::TrustAnchors(Vec::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -1156,6 +1166,14 @@ impl ClientHelloPayload {
         }
     }
 
+    pub(crate) fn trust_anchors_extension(&self) -> Option<&[TrustAnchorIdentifier]> {
+        let ext = self.find_extension(ExtensionType::TrustAnchors)?;
+        match *ext {
+            ClientExtension::TrustAnchors(ref tais) => Some(tais),
+            _ => None,
+        }
+    }
+
     pub(crate) fn has_certificate_compression_extension_with_duplicates(&self) -> bool {
         if let Some(algs) = self.certificate_compression_extension() {
             has_duplicates::<_, _, u16>(algs.iter().cloned())
@@ -1163,6 +1181,23 @@ impl ClientHelloPayload {
             false
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TrustAnchorIdentifier(PayloadU8);
+
+impl<'a> Codec<'a> for TrustAnchorIdentifier {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes)
+    }
+
+    fn read(reader: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(Self(PayloadU8::read(reader)?))
+    }
+}
+
+impl TlsListElement for TrustAnchorIdentifier {
+    const SIZE_LEN: ListLength = ListLength::U16;
 }
 
 #[derive(Clone, Debug)]
@@ -1666,7 +1701,7 @@ impl<'a> Codec<'a> for CertificatePayloadTls13<'a> {
 }
 
 impl<'a> CertificatePayloadTls13<'a> {
-    pub(crate) fn new(
+    pub(crate) fn from_x509_certificates(
         certs: impl Iterator<Item = &'a CertificateDer<'a>>,
         ocsp_response: Option<&'a [u8]>,
     ) -> Self {
@@ -1692,6 +1727,13 @@ impl<'a> CertificatePayloadTls13<'a> {
                     e
                 })
                 .collect(),
+        }
+    }
+
+    pub(crate) fn from_bikeshed_certificate(cert: BikeshedCertificate<'_>) -> Self {
+        Self {
+            context: PayloadU8::empty(),
+            entries: vec![CertificateEntry::new(cert.encode())],
         }
     }
 

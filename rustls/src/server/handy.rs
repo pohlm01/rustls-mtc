@@ -276,13 +276,22 @@ mod sni_resolver {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::msgs::enums::CertificateType;
         use crate::server::ResolvesServerCert;
 
         #[test]
         fn test_resolvesservercertusingsni_requires_sni() {
             let rscsni = ResolvesServerCertUsingSni::new();
             assert!(rscsni
-                .resolve(ClientHello::new(&None, &[], None, &[]))
+                .resolve(ClientHello::new(
+                    &None,
+                    &[],
+                    None,
+                    &[],
+                    &[CertificateType::X509],
+                    &[CertificateType::X509],
+                    None
+                ))
                 .is_none());
         }
 
@@ -293,7 +302,15 @@ mod sni_resolver {
                 .unwrap()
                 .to_owned();
             assert!(rscsni
-                .resolve(ClientHello::new(&Some(name), &[], None, &[]))
+                .resolve(ClientHello::new(
+                    &Some(name),
+                    &[],
+                    None,
+                    &[],
+                    &[CertificateType::X509],
+                    &[CertificateType::X509],
+                    None
+                ))
                 .is_none());
         }
     }

@@ -7,6 +7,7 @@ use pki_types::{CertificateDer, PrivateKeyDer};
 use crate::builder::{ConfigBuilder, WantsVerifier};
 use crate::crypto::CryptoProvider;
 use crate::error::Error;
+use crate::msgs::enums::CertificateType;
 use crate::server::{handy, ResolvesServerCert, ServerConfig};
 use crate::sign::CertifiedKey;
 use crate::time_provider::TimeProvider;
@@ -150,6 +151,7 @@ impl ConfigBuilder<ServerConfig, WantsServerCert> {
             cert_compressors: compress::default_cert_compressors().to_vec(),
             cert_compression_cache: Arc::new(compress::CompressionCache::default()),
             cert_decompressors: compress::default_cert_decompressors().to_vec(),
+            supported_server_certificate_types: [CertificateType::X509].to_vec(),
         }
     }
 }

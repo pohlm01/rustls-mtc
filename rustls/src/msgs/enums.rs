@@ -120,6 +120,8 @@ enum_builder! {
         TransportParametersDraft => 0xffa5,
         EncryptedClientHello => 0xfe0d, // https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#section-11.1
         EncryptedClientHelloOuterExtensions => 0xfd00, // https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#section-5.1
+        // TODO @max correct extension identifier
+        TrustAnchors => 0xfc00, // https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01#section-4.1
     }
 }
 
