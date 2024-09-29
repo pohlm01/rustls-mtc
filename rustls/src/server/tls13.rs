@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 pub(super) use client_hello::CompleteClientHelloHandling;
-use pki_types::{CertificateDer, UnixTime};
+use pki_types::UnixTime;
 use subtle::ConstantTimeEq;
 
 use super::hs::{self, HandshakeHashOrBuffer, ServerContext};
@@ -41,13 +41,13 @@ mod client_hello {
     use crate::enums::SignatureScheme;
     use crate::msgs::base::{Payload, PayloadU8};
     use crate::msgs::ccs::ChangeCipherSpecPayload;
-    use crate::msgs::enums::{CertificateType, Compression, NamedGroup, PSKKeyExchangeMode};
+    use crate::msgs::enums::{Compression, NamedGroup, PSKKeyExchangeMode};
     use crate::msgs::handshake::{
         CertReqExtension, CertificatePayloadTls13, CertificateRequestPayloadTls13,
         ClientHelloPayload, HelloRetryExtension, HelloRetryRequest, KeyShareEntry, Random,
         ServerExtension, ServerHelloPayload, SessionId,
     };
-    use crate::server::common::ActiveCertifiedKey;
+    use crate::server::common::{ActiveCertifiedKey, Certificate};
     use crate::sign;
     use crate::tls13::key_schedule::{
         KeyScheduleEarly, KeyScheduleHandshake, KeySchedulePreHandshake,
@@ -372,13 +372,13 @@ mod client_hello {
             let doing_client_auth = if full_handshake {
                 let client_auth = emit_certificate_req_tls13(&mut flight, &self.config)?;
 
-                let payload = match cx.common.certificate_type {
-                    CertificateType::X509 => CertificatePayloadTls13::from_x509_certificates(
-                        server_key.get_cert().iter(),
-                        ocsp_response,
-                    ),
-                    CertificateType::Bikeshed => todo!(),
-                    _ => todo!(),
+                let payload = match server_key.get_cert() {
+                    Certificate::X509(cert) => {
+                        CertificatePayloadTls13::from_x509_certificates(cert.iter(), ocsp_response)
+                    }
+                    Certificate::Bikeshed(cert) => {
+                        CertificatePayloadTls13::from_bikeshed_certificate(cert)
+                    }
                 };
                 if let Some(compressor) = cert_compressor {
                     emit_compressed_certificate_tls13(

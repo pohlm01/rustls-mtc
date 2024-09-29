@@ -908,7 +908,12 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
         if let Some(client_auth) = &st.client_auth {
             let certs = match client_auth {
                 ClientAuthDetails::Empty { .. } => CertificateChain::default(),
-                ClientAuthDetails::Verify { certkey, .. } => CertificateChain(certkey.cert.clone()),
+                ClientAuthDetails::Verify { certkey, .. } => CertificateChain(
+                    certkey
+                        .x509_cert_chain()
+                        .unwrap_or_default()
+                        .to_vec(),
+                ),
             };
             emit_certificate(&mut st.transcript, certs, cx.common);
         }

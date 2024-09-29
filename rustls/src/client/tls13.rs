@@ -1163,8 +1163,14 @@ fn emit_compressed_certificate_tls13(
     compressor: &dyn compress::CertCompressor,
     config: &ClientConfig,
 ) {
-    let mut cert_payload =
-        CertificatePayloadTls13::from_x509_certificates(certkey.cert.iter(), None);
+    let mut cert_payload = match certkey {
+        CertifiedKey::X509 { cert, .. } => {
+            CertificatePayloadTls13::from_x509_certificates(cert.iter(), None)
+        }
+        CertifiedKey::Bikeshed { cert, .. } => {
+            CertificatePayloadTls13::from_bikeshed_certificate(cert)
+        }
+    };
     cert_payload.context = PayloadU8::new(auth_context.clone().unwrap_or_default());
 
     let compressed = match config
@@ -1186,10 +1192,15 @@ fn emit_certificate_tls13(
     certkey: Option<&CertifiedKey>,
     auth_context: Option<Vec<u8>>,
 ) {
-    let certs = certkey
-        .map(|ck| ck.cert.as_ref())
-        .unwrap_or(&[][..]);
-    let mut cert_payload = CertificatePayloadTls13::from_x509_certificates(certs.iter(), None);
+    let mut cert_payload = match certkey {
+        Some(CertifiedKey::X509 { cert, .. }) => {
+            CertificatePayloadTls13::from_x509_certificates(cert.iter(), None)
+        }
+        Some(CertifiedKey::Bikeshed { cert, .. }) => {
+            CertificatePayloadTls13::from_bikeshed_certificate(cert)
+        }
+        None => CertificatePayloadTls13::empty(),
+    };
     cert_payload.context = PayloadU8::new(auth_context.unwrap_or_default());
 
     flight.add(HandshakeMessagePayload {

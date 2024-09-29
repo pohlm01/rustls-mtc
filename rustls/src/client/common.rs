@@ -94,7 +94,7 @@ impl ClientAuthDetails {
             .collect::<Vec<&[u8]>>();
 
         if let Some(certkey) = resolver.resolve(&acceptable_issuers, sigschemes) {
-            if let Some(signer) = certkey.key.choose_scheme(sigschemes) {
+            if let Some(signer) = certkey.key().choose_scheme(sigschemes) {
                 debug!("Attempting client auth");
                 return Self::Verify {
                     certkey,

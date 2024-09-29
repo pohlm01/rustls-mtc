@@ -209,7 +209,13 @@ mod client_hello {
                 &self.randoms,
                 self.extra_exts,
             )?;
-            emit_certificate(&mut flight, server_key.get_cert());
+            emit_certificate(
+                &mut flight,
+                server_key
+                    .get_cert()
+                    .into_x509()
+                    .unwrap_or_default(),
+            );
             if let Some(ocsp_response) = ocsp_response {
                 emit_cert_status(&mut flight, ocsp_response);
             }

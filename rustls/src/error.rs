@@ -44,6 +44,10 @@ pub enum Error {
     /// The peer didn't give us any certificates.
     NoCertificatesPresented,
 
+    /// X509 or Bikeshed certificate got confused
+    // TODO @max think about error handling
+    WrongCertificateType,
+
     /// The certificate verifier doesn't support the given type of name.
     UnsupportedNameType,
 
@@ -595,6 +599,7 @@ impl fmt::Display for Error {
             Self::InconsistentKeys(ref why) => {
                 write!(f, "keys may not be consistent: {:?}", why)
             }
+            Self::WrongCertificateType => write!(f, "wrong certificate type"),
             Self::General(ref err) => write!(f, "unexpected error: {}", err),
             Self::Other(ref err) => write!(f, "other error: {}", err),
         }

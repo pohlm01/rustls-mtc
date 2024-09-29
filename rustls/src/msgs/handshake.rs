@@ -1730,10 +1730,17 @@ impl<'a> CertificatePayloadTls13<'a> {
         }
     }
 
-    pub(crate) fn from_bikeshed_certificate(cert: BikeshedCertificate<'_>) -> Self {
+    pub(crate) fn from_bikeshed_certificate(cert: &BikeshedCertificate<'_>) -> Self {
         Self {
             context: PayloadU8::empty(),
             entries: vec![CertificateEntry::new(cert.encode())],
+        }
+    }
+
+    pub(crate) fn empty() -> Self {
+        Self {
+            context: PayloadU8::empty(),
+            entries: Default::default(),
         }
     }
 

@@ -185,7 +185,7 @@ impl AlwaysResolvesChain {
         {
             let cert = Arc::make_mut(&mut r.0);
             if !ocsp.is_empty() {
-                cert.ocsp = Some(ocsp);
+                cert.set_ocsp(ocsp);
             }
         }
 

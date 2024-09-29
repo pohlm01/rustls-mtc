@@ -468,10 +468,11 @@ struct FixedSignatureSchemeServerCertResolver {
 impl server::ResolvesServerCert for FixedSignatureSchemeServerCertResolver {
     fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
         let mut certkey = self.resolver.resolve(client_hello)?;
-        Arc::make_mut(&mut certkey).key = Arc::new(FixedSignatureSchemeSigningKey {
-            key: certkey.key.clone(),
+        let key = certkey.to_key();
+        Arc::make_mut(&mut certkey).set_key(Arc::new(FixedSignatureSchemeSigningKey {
+            key,
             scheme: self.scheme,
-        });
+        }));
         Some(certkey)
     }
 }
@@ -494,10 +495,11 @@ impl client::ResolvesClientCert for FixedSignatureSchemeClientCertResolver {
         let mut certkey = self
             .resolver
             .resolve(root_hint_subjects, sigschemes)?;
-        Arc::make_mut(&mut certkey).key = Arc::new(FixedSignatureSchemeSigningKey {
-            key: certkey.key.clone(),
+        let key = certkey.to_key();
+        Arc::make_mut(&mut certkey).set_key(Arc::new(FixedSignatureSchemeSigningKey {
+            key,
             scheme: self.scheme,
-        });
+        }));
         Some(certkey)
     }
 
