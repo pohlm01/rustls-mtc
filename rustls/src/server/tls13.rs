@@ -372,12 +372,15 @@ mod client_hello {
             let doing_client_auth = if full_handshake {
                 let client_auth = emit_certificate_req_tls13(&mut flight, &self.config)?;
 
+                // TODO @max set the `matches_requested_trust_anchors` to a meaningful values
                 let payload = match server_key.get_cert() {
-                    Certificate::X509(cert) => {
-                        CertificatePayloadTls13::from_x509_certificates(cert.iter(), ocsp_response)
-                    }
+                    Certificate::X509(cert) => CertificatePayloadTls13::from_x509_certificates(
+                        cert.iter(),
+                        ocsp_response,
+                        false,
+                    ),
                     Certificate::Bikeshed(cert) => {
-                        CertificatePayloadTls13::from_bikeshed_certificate(cert)
+                        CertificatePayloadTls13::from_bikeshed_certificate(cert, false)
                     }
                 };
                 if let Some(compressor) = cert_compressor {

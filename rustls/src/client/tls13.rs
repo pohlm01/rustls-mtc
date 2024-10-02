@@ -1165,10 +1165,10 @@ fn emit_compressed_certificate_tls13(
 ) {
     let mut cert_payload = match certkey {
         CertifiedKey::X509 { cert, .. } => {
-            CertificatePayloadTls13::from_x509_certificates(cert.iter(), None)
+            CertificatePayloadTls13::from_x509_certificates(cert.iter(), None, false)
         }
         CertifiedKey::Bikeshed { cert, .. } => {
-            CertificatePayloadTls13::from_bikeshed_certificate(cert)
+            CertificatePayloadTls13::from_bikeshed_certificate(cert, false)
         }
     };
     cert_payload.context = PayloadU8::new(auth_context.clone().unwrap_or_default());
@@ -1194,10 +1194,10 @@ fn emit_certificate_tls13(
 ) {
     let mut cert_payload = match certkey {
         Some(CertifiedKey::X509 { cert, .. }) => {
-            CertificatePayloadTls13::from_x509_certificates(cert.iter(), None)
+            CertificatePayloadTls13::from_x509_certificates(cert.iter(), None, false)
         }
         Some(CertifiedKey::Bikeshed { cert, .. }) => {
-            CertificatePayloadTls13::from_bikeshed_certificate(cert)
+            CertificatePayloadTls13::from_bikeshed_certificate(cert, false)
         }
         None => CertificatePayloadTls13::empty(),
     };
