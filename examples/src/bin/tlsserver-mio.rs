@@ -19,12 +19,6 @@
 //!
 //! [mio]: https://docs.rs/mio/latest/mio/
 
-use std::collections::HashMap;
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::{fs, net};
-
 use clap::{Parser, Subcommand};
 use log::{debug, error};
 use mio::net::{TcpListener, TcpStream};
@@ -33,6 +27,15 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
 use rustls::RootCertStore;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::{fs, net};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, EnvFilter};
 
 // Token for our listening socket.
 const LISTENER: mio::Token = mio::Token(0);
@@ -447,6 +450,9 @@ struct Args {
     /// private key, the last should be a root CA).
     #[clap(long)]
     certs: PathBuf,
+
+    #[clap(long)]
+    mtc_cert: Option<PathBuf>,
     /// Perform client certificate revocation checking using the DER-encoded CRLs from the given
     /// files.
     #[clap(long)]
@@ -527,6 +533,13 @@ fn load_certs(filename: &Path) -> Vec<CertificateDer<'static>> {
         .collect()
 }
 
+fn load_mtc_cert(filename: &Path) -> Vec<u8> {
+    let mut res = vec![];
+    let mut f = File::open(filename).unwrap();
+    f.read_to_end(&mut res).unwrap();
+    res
+}
+
 fn load_private_key(filename: &Path) -> PrivateKeyDer<'static> {
     PrivateKeyDer::from_pem_file(filename).expect("cannot read private key file")
 }
@@ -591,10 +604,14 @@ fn make_config(args: &Args) -> Arc<rustls::ServerConfig> {
     };
 
     let certs = load_certs(&args.certs);
+    let mtc_cert = args
+        .mtc_cert
+        .as_ref()
+        .map(|f| load_mtc_cert(f));
     let privkey = load_private_key(&args.key);
     let ocsp = load_ocsp(args.ocsp.as_deref());
 
-    let mut config = rustls::ServerConfig::builder_with_provider(
+    let config_builder = rustls::ServerConfig::builder_with_provider(
         CryptoProvider {
             cipher_suites: suites,
             ..provider::default_provider()
@@ -603,9 +620,17 @@ fn make_config(args: &Args) -> Arc<rustls::ServerConfig> {
     )
     .with_protocol_versions(&versions)
     .expect("inconsistent cipher-suites/versions specified")
-    .with_client_cert_verifier(client_auth)
-    .with_single_cert_with_ocsp(certs, privkey, ocsp)
-    .expect("bad certificates/private key");
+    .with_client_cert_verifier(client_auth);
+
+    let mut config = if let Some(mtc_cert) = mtc_cert {
+        config_builder
+            .with_single_mtc_cert("62253.12.15.1", mtc_cert, privkey)
+            .expect("bad certificates/private key")
+    } else {
+        config_builder
+            .with_single_cert_with_ocsp(certs, privkey, ocsp)
+            .expect("bad certificates/private key")
+    };
 
     config.key_log = Arc::new(rustls::KeyLogFile::new());
 
@@ -636,6 +661,15 @@ fn make_config(args: &Args) -> Arc<rustls::ServerConfig> {
 }
 
 fn main() {
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_file(true)
+                .with_line_number(true),
+        )
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let args = Args::parse();
     if args.verbose {
         env_logger::Builder::new()

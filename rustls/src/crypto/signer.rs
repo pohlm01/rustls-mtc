@@ -2,11 +2,12 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::Debug;
-
+use core::ops::Deref;
 use pki_types::{AlgorithmIdentifier, CertificateDer, SubjectPublicKeyInfoDer};
 
 use crate::enums::{SignatureAlgorithm, SignatureScheme};
 use crate::error::{Error, InconsistentKeys};
+use crate::msgs::handshake::BikeshedCertificate;
 use crate::server::ParsedCertificate;
 use crate::x509;
 
@@ -85,19 +86,23 @@ pub trait Signer: Debug + Send + Sync {
     fn scheme(&self) -> SignatureScheme;
 }
 
-/// A packaged-together certificate chain, matching `SigningKey` and
-/// optional stapled OCSP response.
 #[derive(Clone, Debug)]
-pub struct CertifiedKey {
-    /// The certificate chain.
-    pub cert: Vec<CertificateDer<'static>>,
+pub enum CertifiedKey {
+    X509 {
+        /// The certificate chain.
+        cert: Vec<CertificateDer<'static>>,
 
-    /// The certified key.
-    pub key: Arc<dyn SigningKey>,
+        /// The certified key.
+        key: Arc<dyn SigningKey>,
 
-    /// An optional OCSP response from the certificate issuer,
-    /// attesting to its continued validity.
-    pub ocsp: Option<Vec<u8>>,
+        /// An optional OCSP response from the certificate issuer,
+        /// attesting to its continued validity.
+        ocsp: Option<Vec<u8>>,
+    },
+    Bikeshed {
+        cert: BikeshedCertificate<'static>,
+        key: Arc<dyn SigningKey>,
+    },
 }
 
 impl CertifiedKey {
@@ -106,17 +111,53 @@ impl CertifiedKey {
     /// The cert chain must not be empty. The first certificate in the chain
     /// must be the end-entity certificate.
     pub fn new(cert: Vec<CertificateDer<'static>>, key: Arc<dyn SigningKey>) -> Self {
-        Self {
+        Self::X509 {
             cert,
             key,
             ocsp: None,
         }
     }
 
+    pub fn key(&self) -> &dyn SigningKey {
+        match self {
+            Self::X509 { key, .. } => key.deref(),
+            Self::Bikeshed { key, .. } => key.deref(),
+        }
+    }
+
+    pub fn to_key(&self) -> Arc<dyn SigningKey> {
+        match self {
+            Self::X509 { key, .. } => Arc::clone(key),
+            Self::Bikeshed { key, .. } => Arc::clone(key),
+        }
+    }
+
+    pub fn set_key(&mut self, new_key: Arc<dyn SigningKey>) {
+        match self {
+            Self::X509 { ref mut key, .. } => *key = new_key,
+            Self::Bikeshed { ref mut key, .. } => *key = new_key,
+        }
+    }
+
+    pub fn ocsp(&self) -> Option<&[u8]> {
+        match self {
+            Self::X509 { ocsp, .. } => ocsp.as_deref(),
+            Self::Bikeshed { .. } => None,
+        }
+    }
+
+    pub fn set_ocsp(&mut self, new_ocsp: Vec<u8>) {
+        match self {
+            Self::X509 { ref mut ocsp, .. } => *ocsp = Some(new_ocsp),
+            Self::Bikeshed { .. } => {}
+        }
+    }
+
     /// Verify the consistency of this [`CertifiedKey`]'s public and private keys.
     /// This is done by performing a comparison of SubjectPublicKeyInfo bytes.
     pub fn keys_match(&self) -> Result<(), Error> {
-        let key_spki = match self.key.public_key() {
+        let key = self.key();
+        let key_spki = match key.public_key() {
             Some(key) => key,
             None => return Err(InconsistentKeys::Unknown.into()),
         };
@@ -128,11 +169,28 @@ impl CertifiedKey {
         }
     }
 
+    pub fn x509_cert_chain(&self) -> Option<&[CertificateDer<'static>]> {
+        match self {
+            Self::X509 { cert, .. } => Some(cert),
+            Self::Bikeshed { .. } => None,
+        }
+    }
+
     /// The end-entity certificate.
     pub fn end_entity_cert(&self) -> Result<&CertificateDer<'_>, Error> {
-        self.cert
-            .first()
-            .ok_or(Error::NoCertificatesPresented)
+        match self {
+            Self::X509 { cert, .. } => cert
+                .first()
+                .ok_or(Error::NoCertificatesPresented),
+            Self::Bikeshed { .. } => Err(Error::WrongCertificateType),
+        }
+    }
+
+    pub fn bikeshed_certificate(&self) -> Result<&BikeshedCertificate<'_>, Error> {
+        match self {
+            Self::X509 { .. } => Err(Error::WrongCertificateType),
+            Self::Bikeshed { cert, .. } => Ok(cert),
+        }
     }
 }
 

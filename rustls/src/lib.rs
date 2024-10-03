@@ -510,7 +510,7 @@ pub mod unbuffered {
 
 // The public interface is:
 pub use crate::builder::{ConfigBuilder, ConfigSide, WantsVerifier, WantsVersions};
-pub use crate::common_state::{CommonState, HandshakeKind, IoState, Side};
+pub use crate::common_state::{CommonState, HandshakeKind, IoState, Side, X509orBikeshed};
 #[cfg(feature = "std")]
 pub use crate::conn::{Connection, Reader, Writer};
 pub use crate::conn::{ConnectionCommon, SideData};
@@ -528,6 +528,7 @@ pub use crate::key_log_file::KeyLogFile;
 pub use crate::msgs::enums::NamedGroup;
 pub use crate::msgs::ffdhe_groups;
 pub use crate::msgs::handshake::DistinguishedName;
+pub use crate::msgs::{enums::CertificateType, handshake::TrustAnchorIdentifier};
 #[cfg(feature = "std")]
 pub use crate::stream::{Stream, StreamOwned};
 pub use crate::suites::{

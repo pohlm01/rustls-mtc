@@ -13,7 +13,7 @@ use super::hs::ClientContext;
 use crate::check::{inappropriate_handshake_message, inappropriate_message};
 use crate::client::common::{ClientAuthDetails, ServerCertDetails};
 use crate::client::{hs, ClientConfig};
-use crate::common_state::{CommonState, HandshakeKind, KxState, Side, State};
+use crate::common_state::{CommonState, HandshakeKind, KxState, Side, State, X509orBikeshed};
 use crate::conn::ConnectionRandoms;
 use crate::crypto::KeyExchangeAlgorithm;
 use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion};
@@ -135,7 +135,7 @@ mod server_hello {
                         resuming
                             .server_cert_chain()
                             .clone()
-                            .into_owned(),
+                            .clone(),
                     );
                     cx.common.handshake_kind = Some(HandshakeKind::Resumed);
                     let cert_verified = verify::ServerCertVerified::assertion();
@@ -831,7 +831,7 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
 
         cx.common.check_aligned_handshake()?;
 
-        trace!("Server cert is {:?}", st.server_cert.cert_chain);
+        trace!("Server cert is {:?}", st.server_cert);
         debug!("Server DNS name is {:?}", st.server_name);
 
         let suite = st.suite;
@@ -902,13 +902,19 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
                         .send_cert_verify_error_alert(err)
                 })?
         };
-        cx.common.peer_certificates = Some(st.server_cert.cert_chain.into_owned());
+        cx.common.peer_certificates =
+            Some(X509orBikeshed::X509(st.server_cert.cert_chain.into_owned()));
 
         // 4.
         if let Some(client_auth) = &st.client_auth {
             let certs = match client_auth {
                 ClientAuthDetails::Empty { .. } => CertificateChain::default(),
-                ClientAuthDetails::Verify { certkey, .. } => CertificateChain(certkey.cert.clone()),
+                ClientAuthDetails::Verify { certkey, .. } => CertificateChain(
+                    certkey
+                        .x509_cert_chain()
+                        .unwrap_or_default()
+                        .to_vec(),
+                ),
             };
             emit_certificate(&mut st.transcript, certs, cx.common);
         }

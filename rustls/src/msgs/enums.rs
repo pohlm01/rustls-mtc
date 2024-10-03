@@ -96,6 +96,8 @@ enum_builder! {
         Heartbeat => 0x000f,
         ALProtocolNegotiation => 0x0010,
         SCT => 0x0012,
+        ClientCertificateType => 0x0013, // RFC 7250 (Raw public keys)
+        ServerCertificateType => 0x0014, // RFC 7250 (Raw public keys)
         Padding => 0x0015,
         ExtendedMasterSecret => 0x0017,
         CompressCertificate => 0x001b,
@@ -118,6 +120,8 @@ enum_builder! {
         TransportParametersDraft => 0xffa5,
         EncryptedClientHello => 0xfe0d, // https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#section-11.1
         EncryptedClientHelloOuterExtensions => 0xfd00, // https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#section-5.1
+        // TODO @max correct extension identifier
+        TrustAnchors => 0xfc00, // https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01#section-4.1
     }
 }
 
@@ -146,6 +150,17 @@ impl ExtensionType {
                 | Self::KeyShare
                 | Self::PSKKeyExchangeModes
         )
+    }
+}
+
+enum_builder! {
+
+    @U8
+    pub enum CertificateType {
+        X509 => 0x00,
+        RawPublicKey => 0x02,
+        // TODO replace with correct enum value
+        Bikeshed => 0xe0, // 224
     }
 }
 

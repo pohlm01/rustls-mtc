@@ -1174,7 +1174,7 @@ fn sample_certificate_payload_tls13() -> CertificatePayloadTls13<'static> {
     CertificatePayloadTls13 {
         context: PayloadU8(vec![1, 2, 3]),
         entries: vec![CertificateEntry {
-            cert: CertificateDer::from(vec![3, 4, 5]),
+            cert: PayloadU24(Payload::Owned(CertificateDer::from(vec![3, 4, 5]).to_vec())),
             exts: vec![
                 CertificateExtension::CertificateStatus(CertificateStatus {
                     ocsp_response: PayloadU24(Payload::new(vec![1, 2, 3])),

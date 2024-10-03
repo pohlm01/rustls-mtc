@@ -4,7 +4,6 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Deref;
-
 use pki_types::ServerName;
 
 #[cfg(feature = "tls12")]
@@ -25,7 +24,9 @@ use crate::error::{Error, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHashBuffer;
 use crate::log::{debug, trace};
 use crate::msgs::base::Payload;
-use crate::msgs::enums::{Compression, ECPointFormat, ExtensionType, PSKKeyExchangeMode};
+use crate::msgs::enums::{
+    CertificateType, Compression, ECPointFormat, ExtensionType, PSKKeyExchangeMode,
+};
 use crate::msgs::handshake::{
     CertificateStatusRequest, ClientExtension, ClientHelloPayload, ClientSessionTicket,
     ConvertProtocolNameList, HandshakeMessagePayload, HandshakePayload, HasServerExtensions,
@@ -338,6 +339,36 @@ fn emit_client_hello_for_retry(
     } else {
         false
     };
+
+    if support_tls13 {
+        if config
+            .supported_client_certificate_types
+            .iter()
+            .any(|t| !matches!(t, CertificateType::X509))
+        {
+            exts.push(ClientExtension::ClientCertificateType(
+                config
+                    .supported_client_certificate_types
+                    .clone(),
+            ));
+        }
+        if config
+            .supported_server_certificate_types
+            .iter()
+            .any(|t| !matches!(t, CertificateType::X509))
+        {
+            exts.push(ClientExtension::ServerCertificateType(
+                config
+                    .supported_server_certificate_types
+                    .clone(),
+            ));
+        }
+        if !config.trusted_trust_anchors.is_empty() {
+            exts.push(ClientExtension::TrustAnchors(
+                config.trusted_trust_anchors.clone(),
+            ))
+        }
+    }
 
     // Extra extensions must be placed before the PSK extension
     exts.extend(extra_exts.iter().cloned());

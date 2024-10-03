@@ -12,7 +12,9 @@ use super::common::ActiveCertifiedKey;
 use super::hs::{self, ServerContext};
 use super::server_conn::{ProducesTickets, ServerConfig, ServerConnectionData};
 use crate::check::inappropriate_message;
-use crate::common_state::{CommonState, HandshakeFlightTls12, HandshakeKind, Side, State};
+use crate::common_state::{
+    CommonState, HandshakeFlightTls12, HandshakeKind, Side, State, X509orBikeshed,
+};
 use crate::conn::ConnectionRandoms;
 use crate::crypto::ActiveKeyExchange;
 use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion};
@@ -209,7 +211,13 @@ mod client_hello {
                 &self.randoms,
                 self.extra_exts,
             )?;
-            emit_certificate(&mut flight, server_key.get_cert());
+            emit_certificate(
+                &mut flight,
+                server_key
+                    .get_cert()
+                    .into_x509()
+                    .unwrap_or_default(),
+            );
             if let Some(ocsp_response) = ocsp_response {
                 emit_cert_status(&mut flight, ocsp_response);
             }
@@ -689,7 +697,7 @@ impl State<ServerConnectionData> for ExpectCertificateVerify<'_> {
         }
 
         trace!("client CertificateVerify OK");
-        cx.common.peer_certificates = Some(self.client_cert.into_owned());
+        cx.common.peer_certificates = Some(X509orBikeshed::X509(self.client_cert.into_owned()));
 
         self.transcript.add_message(&m);
         Ok(Box::new(ExpectCcs {

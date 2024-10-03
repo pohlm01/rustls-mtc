@@ -2,19 +2,18 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cmp;
 
-use pki_types::{DnsName, UnixTime};
-use zeroize::Zeroizing;
-
+use crate::common_state::X509orBikeshed;
 use crate::enums::{CipherSuite, ProtocolVersion};
 use crate::error::InvalidMessage;
 use crate::msgs::base::{PayloadU16, PayloadU8};
 use crate::msgs::codec::{Codec, Reader};
-use crate::msgs::handshake::CertificateChain;
 #[cfg(feature = "tls12")]
 use crate::msgs::handshake::SessionId;
 #[cfg(feature = "tls12")]
 use crate::tls12::Tls12CipherSuite;
 use crate::tls13::Tls13CipherSuite;
+use pki_types::{DnsName, UnixTime};
+use zeroize::Zeroizing;
 
 pub(crate) struct Retrieved<T> {
     pub(crate) value: T,
@@ -81,7 +80,7 @@ impl Tls13ClientSessionValue {
         suite: &'static Tls13CipherSuite,
         ticket: Arc<PayloadU16>,
         secret: &[u8],
-        server_cert_chain: CertificateChain<'static>,
+        server_cert_chain: X509orBikeshed<'static>,
         time_now: UnixTime,
         lifetime_secs: u32,
         age_add: u32,
@@ -159,7 +158,7 @@ impl Tls12ClientSessionValue {
         session_id: SessionId,
         ticket: Arc<PayloadU16>,
         master_secret: &[u8],
-        server_cert_chain: CertificateChain<'static>,
+        server_cert_chain: X509orBikeshed<'static>,
         time_now: UnixTime,
         lifetime_secs: u32,
         extended_ms: bool,
@@ -212,7 +211,7 @@ pub struct ClientSessionCommon {
     secret: Zeroizing<PayloadU8>,
     epoch: u64,
     lifetime_secs: u32,
-    server_cert_chain: Arc<CertificateChain<'static>>,
+    server_cert_chain: Arc<X509orBikeshed<'static>>,
 }
 
 impl ClientSessionCommon {
@@ -221,7 +220,7 @@ impl ClientSessionCommon {
         secret: &[u8],
         time_now: UnixTime,
         lifetime_secs: u32,
-        server_cert_chain: CertificateChain<'static>,
+        server_cert_chain: X509orBikeshed<'static>,
     ) -> Self {
         Self {
             ticket,
@@ -232,7 +231,7 @@ impl ClientSessionCommon {
         }
     }
 
-    pub(crate) fn server_cert_chain(&self) -> &CertificateChain<'static> {
+    pub(crate) fn server_cert_chain(&self) -> &X509orBikeshed<'static> {
         &self.server_cert_chain
     }
 
@@ -261,7 +260,7 @@ pub struct ServerSessionValue {
     pub(crate) cipher_suite: CipherSuite,
     pub(crate) master_secret: Zeroizing<PayloadU8>,
     pub(crate) extended_ms: bool,
-    pub(crate) client_cert_chain: Option<CertificateChain<'static>>,
+    pub(crate) client_cert_chain: Option<X509orBikeshed<'static>>,
     pub(crate) alpn: Option<PayloadU8>,
     pub(crate) application_data: PayloadU16,
     pub creation_time_sec: u64,
@@ -282,6 +281,7 @@ impl Codec<'_> for ServerSessionValue {
         self.cipher_suite.encode(bytes);
         self.master_secret.encode(bytes);
         (u8::from(self.extended_ms)).encode(bytes);
+        // TODO @max probably comply with https://datatracker.ietf.org/doc/html/rfc5077#section-4
         if let Some(ref chain) = self.client_cert_chain {
             1u8.encode(bytes);
             chain.encode(bytes);
@@ -320,7 +320,7 @@ impl Codec<'_> for ServerSessionValue {
         let ems = u8::read(r)?;
         let has_ccert = u8::read(r)? == 1;
         let ccert = if has_ccert {
-            Some(CertificateChain::read(r)?.into_owned())
+            Some(X509orBikeshed::read(r)?.into_owned())
         } else {
             None
         };
@@ -356,7 +356,7 @@ impl ServerSessionValue {
         v: ProtocolVersion,
         cs: CipherSuite,
         ms: &[u8],
-        client_cert_chain: Option<CertificateChain<'static>>,
+        client_cert_chain: Option<X509orBikeshed<'static>>,
         alpn: Option<Vec<u8>>,
         application_data: Vec<u8>,
         creation_time: UnixTime,

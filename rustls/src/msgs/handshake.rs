@@ -4,9 +4,11 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::num::ParseIntError;
 use core::ops::Deref;
+use core::str::FromStr;
 use core::{fmt, iter};
-
+use log::trace;
 use pki_types::{CertificateDer, DnsName};
 
 #[cfg(feature = "tls12")]
@@ -23,9 +25,9 @@ use crate::log::warn;
 use crate::msgs::base::{Payload, PayloadU16, PayloadU24, PayloadU8};
 use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, TlsListElement};
 use crate::msgs::enums::{
-    CertificateStatusType, ClientCertificateType, Compression, ECCurveType, ECPointFormat,
-    EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest, NamedGroup,
-    PSKKeyExchangeMode, ServerNameType,
+    CertificateStatusType, CertificateType, ClientCertificateType, Compression, ECCurveType,
+    ECPointFormat, EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest,
+    NamedGroup, PSKKeyExchangeMode, ServerNameType,
 };
 use crate::rand;
 use crate::verify::DigitallySignedStruct;
@@ -561,7 +563,19 @@ pub enum ClientExtension {
     CertificateCompressionAlgorithms(Vec<CertificateCompressionAlgorithm>),
     EncryptedClientHello(EncryptedClientHello),
     EncryptedClientHelloOuterExtensions(Vec<ExtensionType>),
+
+    // RFC 7250 (Raw Public Keys)
+    ServerCertificateType(Vec<CertificateType>),
+    ClientCertificateType(Vec<CertificateType>),
+
+    // https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01
+    TrustAnchors(Vec<TrustAnchorIdentifier>),
+
     Unknown(UnknownExtension),
+}
+
+impl TlsListElement for CertificateType {
+    const SIZE_LEN: ListLength = ListLength::U8;
 }
 
 impl ClientExtension {
@@ -588,6 +602,9 @@ impl ClientExtension {
             Self::EncryptedClientHelloOuterExtensions(_) => {
                 ExtensionType::EncryptedClientHelloOuterExtensions
             }
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
+            Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -620,6 +637,10 @@ impl Codec<'_> for ClientExtension {
             Self::CertificateCompressionAlgorithms(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHelloOuterExtensions(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
+                r.encode(nested.buf)
+            }
+            Self::TrustAnchors(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -666,6 +687,13 @@ impl Codec<'_> for ClientExtension {
             ExtensionType::EncryptedClientHelloOuterExtensions => {
                 Self::EncryptedClientHelloOuterExtensions(Vec::read(&mut sub)?)
             }
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertificateType(Vec::read(&mut sub)?)
+            }
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertificateType(Vec::read(&mut sub)?)
+            }
+            ExtensionType::TrustAnchors => Self::TrustAnchors(Vec::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -723,6 +751,14 @@ pub enum ServerExtension {
     TransportParametersDraft(Vec<u8>),
     EarlyData,
     EncryptedClientHello(ServerEncryptedClientHello),
+
+    // RFC 7250 (Raw Public Keys)
+    ServerCertificateType(CertificateType),
+    ClientCertificateType(CertificateType),
+
+    // https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01
+    TrustAnchors(Vec<TrustAnchorIdentifier>),
+
     Unknown(UnknownExtension),
 }
 
@@ -743,6 +779,9 @@ impl ServerExtension {
             Self::TransportParametersDraft(_) => ExtensionType::TransportParametersDraft,
             Self::EarlyData => ExtensionType::EarlyData,
             Self::EncryptedClientHello(_) => ExtensionType::EncryptedClientHello,
+            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
+            Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -769,6 +808,10 @@ impl Codec<'_> for ServerExtension {
                 nested.buf.extend_from_slice(r);
             }
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
+                r.encode(nested.buf)
+            }
+            Self::TrustAnchors(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -799,6 +842,13 @@ impl Codec<'_> for ServerExtension {
             ExtensionType::EncryptedClientHello => {
                 Self::EncryptedClientHello(ServerEncryptedClientHello::read(&mut sub)?)
             }
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertificateType(CertificateType::read(&mut sub)?)
+            }
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertificateType(CertificateType::read(&mut sub)?)
+            }
+            ExtensionType::TrustAnchors => Self::TrustAnchors(Vec::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -1108,6 +1158,30 @@ impl ClientHelloPayload {
         }
     }
 
+    pub(crate) fn server_certificate_type_extension(&self) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match *ext {
+            ClientExtension::ServerCertificateType(ref types) => Some(types),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn client_certificate_type_extension(&self) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
+        match *ext {
+            ClientExtension::ClientCertificateType(ref types) => Some(types),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn trust_anchors_extension(&self) -> Option<&[TrustAnchorIdentifier]> {
+        let ext = self.find_extension(ExtensionType::TrustAnchors)?;
+        match *ext {
+            ClientExtension::TrustAnchors(ref tais) => Some(tais),
+            _ => None,
+        }
+    }
+
     pub(crate) fn has_certificate_compression_extension_with_duplicates(&self) -> bool {
         if let Some(algs) = self.certificate_compression_extension() {
             has_duplicates::<_, _, u16>(algs.iter().cloned())
@@ -1115,6 +1189,73 @@ impl ClientHelloPayload {
             false
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TrustAnchorIdentifier(PayloadU8);
+
+impl<'a> Codec<'a> for TrustAnchorIdentifier {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes)
+    }
+
+    fn read(reader: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(Self(PayloadU8::read(reader)?))
+    }
+}
+
+impl FromStr for TrustAnchorIdentifier {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(s.split('.')
+            .map(|s| s.parse::<u32>())
+            .collect::<Result<Vec<u32>, _>>()?
+            .into())
+    }
+}
+
+// TODO @max remove duplicate code in mtc_verifier and add checks if it is a valid TAI
+impl<T: IntoIterator<Item = u32>> From<T> for TrustAnchorIdentifier {
+    fn from(segments: T) -> Self {
+        let mut res = Vec::new();
+        for segment in segments {
+            for j in (0..4).rev() {
+                let cur = (segment >> (j * 7)) as u8;
+                if cur != 0 || j == 0 {
+                    let mut byte: u8 = cur & 0x7F;
+                    if j != 0 {
+                        byte |= 0x80;
+                    }
+                    res.push(byte);
+                }
+            }
+        }
+        Self(PayloadU8(res))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BikeshedCertificate<'a>(pub(crate) PayloadU24<'a>);
+
+impl BikeshedCertificate<'_> {
+    pub(crate) fn into_owned(self) -> BikeshedCertificate<'static> {
+        BikeshedCertificate(self.0.into_owned())
+    }
+}
+
+impl<'a> Codec<'a> for BikeshedCertificate<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes)
+    }
+
+    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(Self(PayloadU24::read(r)?))
+    }
+}
+
+impl TlsListElement for TrustAnchorIdentifier {
+    const SIZE_LEN: ListLength = ListLength::U16;
 }
 
 #[derive(Clone, Debug)]
@@ -1461,6 +1602,9 @@ pub(crate) const CERTIFICATE_MAX_SIZE_LIMIT: usize = 0x1_0000;
 #[derive(Debug)]
 pub(crate) enum CertificateExtension<'a> {
     CertificateStatus(CertificateStatus<'a>),
+    // TODO @max this is based on https://datatracker.ietf.org/doc/html/draft-davidben-tls-merkle-tree-certs-03#appendix-B.1
+    ClientCertificateType(CertificateType),
+    TrustAnchors(Vec<TrustAnchorIdentifier>),
     Unknown(UnknownExtension),
 }
 
@@ -1468,6 +1612,8 @@ impl<'a> CertificateExtension<'a> {
     pub(crate) fn ext_type(&self) -> ExtensionType {
         match *self {
             Self::CertificateStatus(_) => ExtensionType::StatusRequest,
+            Self::ClientCertificateType(_) => ExtensionType::ServerCertificateType,
+            Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -1482,6 +1628,8 @@ impl<'a> CertificateExtension<'a> {
     pub(crate) fn into_owned(self) -> CertificateExtension<'static> {
         match self {
             Self::CertificateStatus(st) => CertificateExtension::CertificateStatus(st.into_owned()),
+            Self::ClientCertificateType(sct) => CertificateExtension::ClientCertificateType(sct),
+            Self::TrustAnchors(tai) => CertificateExtension::TrustAnchors(tai),
             Self::Unknown(unk) => CertificateExtension::Unknown(unk),
         }
     }
@@ -1494,6 +1642,8 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
         let nested = LengthPrefixedBuffer::new(ListLength::U16, bytes);
         match *self {
             Self::CertificateStatus(ref r) => r.encode(nested.buf),
+            Self::ClientCertificateType(r) => r.encode(nested.buf),
+            Self::TrustAnchors(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -1507,6 +1657,14 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
             ExtensionType::StatusRequest => {
                 let st = CertificateStatus::read(&mut sub)?;
                 Self::CertificateStatus(st)
+            }
+            ExtensionType::ServerCertificateType => {
+                let sct = CertificateType::read(&mut sub)?;
+                Self::ClientCertificateType(sct)
+            }
+            ExtensionType::TrustAnchors => {
+                let tai = Vec::<TrustAnchorIdentifier>::read(&mut sub)?;
+                Self::TrustAnchors(tai)
             }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
@@ -1522,7 +1680,7 @@ impl<'a> TlsListElement for CertificateExtension<'a> {
 
 #[derive(Debug)]
 pub(crate) struct CertificateEntry<'a> {
-    pub(crate) cert: CertificateDer<'a>,
+    pub(crate) cert: PayloadU24<'a>,
     pub(crate) exts: Vec<CertificateExtension<'a>>,
 }
 
@@ -1534,14 +1692,14 @@ impl<'a> Codec<'a> for CertificateEntry<'a> {
 
     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
         Ok(Self {
-            cert: CertificateDer::read(r)?,
+            cert: PayloadU24::read(r)?,
             exts: Vec::read(r)?,
         })
     }
 }
 
 impl<'a> CertificateEntry<'a> {
-    pub(crate) fn new(cert: CertificateDer<'a>) -> Self {
+    pub(crate) fn new(cert: PayloadU24<'a>) -> Self {
         Self {
             cert,
             exts: Vec::new(),
@@ -1570,7 +1728,7 @@ impl<'a> CertificateEntry<'a> {
     pub(crate) fn has_unknown_extension(&self) -> bool {
         self.exts
             .iter()
-            .any(|ext| ext.ext_type() != ExtensionType::StatusRequest)
+            .any(|ext| matches!(ext, CertificateExtension::Unknown(_)))
     }
 
     pub(crate) fn ocsp_response(&self) -> Option<&[u8]> {
@@ -1578,6 +1736,15 @@ impl<'a> CertificateEntry<'a> {
             .iter()
             .find(|ext| ext.ext_type() == ExtensionType::StatusRequest)
             .and_then(CertificateExtension::cert_status)
+    }
+
+    pub(crate) fn trust_anchor_ext(&self) -> Option<&[TrustAnchorIdentifier]> {
+        self.exts
+            .first()
+            .and_then(|ext| match ext {
+                CertificateExtension::TrustAnchors(tai) => Some(tai.as_slice()),
+                _ => None,
+            })
     }
 }
 
@@ -1609,32 +1776,70 @@ impl<'a> Codec<'a> for CertificatePayloadTls13<'a> {
 }
 
 impl<'a> CertificatePayloadTls13<'a> {
-    pub(crate) fn new(
+    pub(crate) fn from_x509_certificates(
         certs: impl Iterator<Item = &'a CertificateDer<'a>>,
         ocsp_response: Option<&'a [u8]>,
+        matches_requested_trust_anchors: bool,
     ) -> Self {
+        let mut entries: Vec<_> = certs
+            // zip certificate iterator with `ocsp_response` followed by
+            // an infinite-length iterator of `None`.
+            .zip(
+                ocsp_response
+                    .into_iter()
+                    .map(Some)
+                    .chain(iter::repeat(None)),
+            )
+            .map(|(cert, ocsp)| {
+                let mut e = CertificateEntry::new(PayloadU24(Payload::Owned(cert.to_vec())));
+                if let Some(ocsp) = ocsp {
+                    e.exts
+                        .push(CertificateExtension::CertificateStatus(
+                            CertificateStatus::new(ocsp),
+                        ));
+                }
+                e
+            })
+            .collect();
+
+        if matches_requested_trust_anchors {
+            entries
+                .first_mut()
+                .iter_mut()
+                .for_each(|entry| {
+                    entry
+                        .exts
+                        .push(CertificateExtension::TrustAnchors(Vec::new()))
+                });
+        };
+
         Self {
             context: PayloadU8::empty(),
-            entries: certs
-                // zip certificate iterator with `ocsp_response` followed by
-                // an infinite-length iterator of `None`.
-                .zip(
-                    ocsp_response
-                        .into_iter()
-                        .map(Some)
-                        .chain(iter::repeat(None)),
-                )
-                .map(|(cert, ocsp)| {
-                    let mut e = CertificateEntry::new(cert.clone());
-                    if let Some(ocsp) = ocsp {
-                        e.exts
-                            .push(CertificateExtension::CertificateStatus(
-                                CertificateStatus::new(ocsp),
-                            ));
-                    }
-                    e
-                })
-                .collect(),
+            entries,
+        }
+    }
+
+    pub(crate) fn from_bikeshed_certificate(
+        cert: BikeshedCertificate<'a>,
+        matches_requested_trust_anchors: bool,
+    ) -> Self {
+        let mut entry = CertificateEntry::new(cert.0);
+        if matches_requested_trust_anchors {
+            entry
+                .exts
+                .push(CertificateExtension::TrustAnchors(Vec::new()));
+        }
+
+        Self {
+            context: PayloadU8::empty(),
+            entries: vec![entry],
+        }
+    }
+
+    pub(crate) fn empty() -> Self {
+        Self {
+            context: PayloadU8::empty(),
+            entries: Default::default(),
         }
     }
 
@@ -1691,9 +1896,14 @@ impl<'a> CertificatePayloadTls13<'a> {
         CertificateChain(
             self.entries
                 .into_iter()
-                .map(|e| e.cert)
+                .map(|e| CertificateDer::from(e.cert.0.into_vec()))
                 .collect(),
         )
+    }
+
+    pub(crate) fn into_bikeshed_certificate(mut self) -> BikeshedCertificate<'a> {
+        assert_eq!(self.entries.len(), 1);
+        BikeshedCertificate(self.entries.remove(0).cert)
     }
 }
 
@@ -2059,6 +2269,22 @@ pub(crate) trait HasServerExtensions {
     fn early_data_extension_offered(&self) -> bool {
         self.find_extension(ExtensionType::EarlyData)
             .is_some()
+    }
+
+    fn selected_server_certificate_type(&self) -> Option<CertificateType> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match *ext {
+            ServerExtension::ServerCertificateType(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    fn selected_client_certificate_type(&self) -> Option<CertificateType> {
+        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
+        match *ext {
+            ServerExtension::ClientCertificateType(c) => Some(c),
+            _ => None,
+        }
     }
 }
 

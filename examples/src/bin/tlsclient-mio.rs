@@ -29,7 +29,10 @@ use mio::net::TcpStream;
 use rustls::crypto::{aws_lc_rs as provider, CryptoProvider};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use rustls::RootCertStore;
+use rustls::{CertificateType, RootCertStore};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, EnvFilter};
 
 const CLIENT: mio::Token = mio::Token(0);
 
@@ -131,6 +134,7 @@ impl TlsClient {
                 .reader()
                 .read_exact(&mut plaintext)
                 .unwrap();
+            println!("Received text:");
             io::stdout()
                 .write_all(&plaintext)
                 .unwrap();
@@ -473,12 +477,28 @@ fn make_config(args: &Args) -> Arc<rustls::ClientConfig> {
             )));
     }
 
+    config.trusted_trust_anchors = vec![
+        "62253.12.15.0".parse().unwrap(),
+        "62253.12.15.1".parse().unwrap(),
+    ];
+    config.supported_server_certificate_types =
+        vec![CertificateType::X509, CertificateType::Bikeshed];
+
     Arc::new(config)
 }
 
 /// Parse some arguments, then make a TLS client connection
 /// somewhere.
 fn main() {
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_file(true)
+                .with_line_number(true),
+        )
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let args = Args::parse();
 
     if args.verbose {

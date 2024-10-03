@@ -7,11 +7,14 @@ use pki_types::{CertificateDer, PrivateKeyDer};
 use crate::builder::{ConfigBuilder, WantsVerifier};
 use crate::crypto::CryptoProvider;
 use crate::error::Error;
+use crate::msgs::base::{Payload, PayloadU24};
+use crate::msgs::enums::CertificateType;
+use crate::msgs::handshake::BikeshedCertificate;
 use crate::server::{handy, ResolvesServerCert, ServerConfig};
 use crate::sign::CertifiedKey;
 use crate::time_provider::TimeProvider;
 use crate::verify::{ClientCertVerifier, NoClientAuth};
-use crate::{compress, versions, InconsistentKeys, NoKeyLog};
+use crate::{compress, versions, InconsistentKeys, NoKeyLog, TrustAnchorIdentifier};
 
 impl ConfigBuilder<ServerConfig, WantsVerifier> {
     /// Choose how to verify client certificates.
@@ -124,6 +127,30 @@ impl ConfigBuilder<ServerConfig, WantsServerCert> {
         Ok(self.with_cert_resolver(Arc::new(resolver)))
     }
 
+    pub fn with_single_mtc_cert(
+        self,
+        tai: &str,
+        cert: Vec<u8>,
+        key_der: PrivateKeyDer<'static>,
+    ) -> Result<ServerConfig, Error> {
+        let private_key = self
+            .state
+            .provider
+            .key_provider
+            .load_private_key(key_der)?;
+
+        // TODO @max parse the cert as much as necessary to extract the TAI
+        // let tai = cert.trust_anchor_identifier();
+        let certified_key = CertifiedKey::Bikeshed {
+            cert: BikeshedCertificate(PayloadU24(Payload::Owned(cert))),
+            key: private_key,
+        };
+
+        let mut resolver = handy::ResolvesServerCertUsingTai::new();
+        resolver.add(tai, certified_key)?;
+        Ok(self.with_cert_resolver(Arc::new(resolver)))
+    }
+
     /// Sets a custom [`ResolvesServerCert`].
     pub fn with_cert_resolver(self, cert_resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
         ServerConfig {
@@ -150,6 +177,7 @@ impl ConfigBuilder<ServerConfig, WantsServerCert> {
             cert_compressors: compress::default_cert_compressors().to_vec(),
             cert_compression_cache: Arc::new(compress::CompressionCache::default()),
             cert_decompressors: compress::default_cert_decompressors().to_vec(),
+            supported_server_certificate_types: [CertificateType::X509].to_vec(),
         }
     }
 }
