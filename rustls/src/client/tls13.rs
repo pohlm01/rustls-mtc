@@ -501,6 +501,11 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
             }
         }
 
+
+        cx.common.certificate_type = exts
+            .selected_server_certificate_type()
+            .unwrap_or(CertificateType::X509);
+
         if let Some(resuming_session) = self.resuming_session {
             let was_early_traffic = cx.common.early_traffic;
             if was_early_traffic {
@@ -1057,22 +1062,22 @@ impl State<ClientConnectionData> for ExpectCertificate {
         if !self.message_already_in_transcript {
             self.transcript.add_message(&m);
         }
-        let cert_chain = require_handshake_msg_move!(
+        let cert_payload = require_handshake_msg_move!(
             m,
             HandshakeType::Certificate,
             HandshakePayload::CertificateTls13
         )?;
 
         // This is only non-empty for client auth.
-        if !cert_chain.context.0.is_empty() {
+        if !cert_payload.context.0.is_empty() {
             return Err(cx.common.send_fatal_alert(
                 AlertDescription::DecodeError,
                 InvalidMessage::InvalidCertRequest,
             ));
         }
 
-        if cert_chain.any_entry_has_duplicate_extension()
-            || cert_chain.any_entry_has_unknown_extension()
+        if cert_payload.any_entry_has_duplicate_extension()
+            || cert_payload.any_entry_has_unknown_extension()
         {
             return Err(cx.common.send_fatal_alert(
                 AlertDescription::UnsupportedExtension,
@@ -1080,20 +1085,24 @@ impl State<ClientConnectionData> for ExpectCertificate {
             ));
         }
 
-        match cx.common.certificate_type {
-            CertificateType::X509 => {}
+        let server_cert = match cx.common.certificate_type {
+            CertificateType::X509 => {
+                let end_entity_ocsp = cert_payload.end_entity_ocsp();
+                ServerCertDetails::from_x509(
+                    cert_payload
+                        .into_certificate_chain()
+                        .into_owned(),
+                    end_entity_ocsp,
+                )
+            }
             CertificateType::RawPublicKey => unimplemented!(),
-            CertificateType::Bikeshed => {}
+            CertificateType::Bikeshed => {
+                ServerCertDetails::from_bikeshed(
+                    cert_payload.into_bikeshed_certificate()
+                )
+            }
             CertificateType::Unknown(_) => unimplemented!(),
-        }
-
-        let end_entity_ocsp = cert_chain.end_entity_ocsp();
-        let server_cert = ServerCertDetails::from_x509(
-            cert_chain
-                .into_certificate_chain()
-                .into_owned(),
-            end_entity_ocsp,
-        );
+        };
 
         Ok(Box::new(ExpectCertificateVerify {
             config: self.config,

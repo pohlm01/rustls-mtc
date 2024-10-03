@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_mtc_cert("62253.12.15", cert, private_key)?;
+        .with_single_mtc_cert("62253.12.15.1", cert, private_key)?;
 
     let listener = TcpListener::bind(format!("[::]:{}", 4443)).unwrap();
     let (mut stream, _) = listener.accept()?;

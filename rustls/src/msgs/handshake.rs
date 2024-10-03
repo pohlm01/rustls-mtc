@@ -8,6 +8,7 @@ use core::num::ParseIntError;
 use core::ops::Deref;
 use core::str::FromStr;
 use core::{fmt, iter};
+use log::trace;
 use pki_types::{CertificateDer, DnsName};
 
 #[cfg(feature = "tls12")]
@@ -1899,6 +1900,11 @@ impl<'a> CertificatePayloadTls13<'a> {
                 .collect(),
         )
     }
+    
+    pub(crate) fn into_bikeshed_certificate(mut self) -> BikeshedCertificate<'a> {
+        assert_eq!(self.entries.len(), 1);
+        BikeshedCertificate(self.entries.remove(0).cert)
+    }
 }
 
 /// Describes supported key exchange mechanisms.
@@ -2263,6 +2269,23 @@ pub(crate) trait HasServerExtensions {
     fn early_data_extension_offered(&self) -> bool {
         self.find_extension(ExtensionType::EarlyData)
             .is_some()
+    }
+
+
+    fn selected_server_certificate_type(&self) -> Option<CertificateType> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match *ext {
+            ServerExtension::ServerCertificateType(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    fn selected_client_certificate_type(&self) -> Option<CertificateType> {
+        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
+        match *ext {
+            ServerExtension::ClientCertificateType(c) => Some(c),
+            _ => None,
+        }
     }
 }
 
