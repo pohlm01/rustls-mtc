@@ -501,7 +501,6 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
             }
         }
 
-
         cx.common.certificate_type = exts
             .selected_server_certificate_type()
             .unwrap_or(CertificateType::X509);
@@ -1097,9 +1096,7 @@ impl State<ClientConnectionData> for ExpectCertificate {
             }
             CertificateType::RawPublicKey => unimplemented!(),
             CertificateType::Bikeshed => {
-                ServerCertDetails::from_bikeshed(
-                    cert_payload.into_bikeshed_certificate()
-                )
+                ServerCertDetails::from_bikeshed(cert_payload.into_bikeshed_certificate())
             }
             CertificateType::Unknown(_) => unimplemented!(),
         };

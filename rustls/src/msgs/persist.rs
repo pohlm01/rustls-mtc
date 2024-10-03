@@ -281,6 +281,7 @@ impl Codec<'_> for ServerSessionValue {
         self.cipher_suite.encode(bytes);
         self.master_secret.encode(bytes);
         (u8::from(self.extended_ms)).encode(bytes);
+        // TODO @max probably comply with https://datatracker.ietf.org/doc/html/rfc5077#section-4
         if let Some(ref chain) = self.client_cert_chain {
             1u8.encode(bytes);
             chain.encode(bytes);

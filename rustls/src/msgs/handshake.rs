@@ -1900,7 +1900,7 @@ impl<'a> CertificatePayloadTls13<'a> {
                 .collect(),
         )
     }
-    
+
     pub(crate) fn into_bikeshed_certificate(mut self) -> BikeshedCertificate<'a> {
         assert_eq!(self.entries.len(), 1);
         BikeshedCertificate(self.entries.remove(0).cert)
@@ -2270,7 +2270,6 @@ pub(crate) trait HasServerExtensions {
         self.find_extension(ExtensionType::EarlyData)
             .is_some()
     }
-
 
     fn selected_server_certificate_type(&self) -> Option<CertificateType> {
         let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
