@@ -216,6 +216,16 @@ impl<'a> ClientHello<'a> {
     pub fn cipher_suites(&self) -> &[CipherSuite] {
         self.cipher_suites
     }
+
+    pub fn supported_server_certificate_types(&self) -> &[CertificateType] {
+        self.supported_server_certificate_types
+    }
+    pub fn supported_client_certificate_types(&self) -> &[CertificateType] {
+        self.supported_client_certificate_types
+    }
+    pub fn supported_trust_anchors(&self) -> Option<&[TrustAnchorIdentifier]> {
+        self.supported_trust_anchors
+    }
 }
 
 /// Common configuration for a set of server sessions.

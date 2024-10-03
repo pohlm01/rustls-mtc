@@ -247,7 +247,6 @@ test_for_each_provider! {
     use super::NoClientSessionStorage;
     use crate::client::ClientSessionStore;
     use crate::msgs::enums::NamedGroup;
-    use crate::msgs::handshake::CertificateChain;
     #[cfg(feature = "tls12")]
     use crate::msgs::handshake::SessionId;
     use crate::msgs::persist::Tls13ClientSessionValue;
@@ -282,7 +281,7 @@ test_for_each_provider! {
                     SessionId::empty(),
                     Arc::new(PayloadU16::empty()),
                     &[],
-                    CertificateChain::default(),
+                    Default::default(),
                     now,
                     0,
                     true,
@@ -304,7 +303,7 @@ test_for_each_provider! {
                 tls13_suite,
                 Arc::new(PayloadU16::empty()),
                 &[],
-                CertificateChain::default(),
+                Default::default(),
                 now,
                 0,
                 0,

@@ -3,11 +3,11 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::ops::Deref;
-use mtc_verifier::Certificate as BikeshedCertificate;
 use pki_types::{AlgorithmIdentifier, CertificateDer, SubjectPublicKeyInfoDer};
 
 use crate::enums::{SignatureAlgorithm, SignatureScheme};
 use crate::error::{Error, InconsistentKeys};
+use crate::msgs::handshake::BikeshedCertificate;
 use crate::server::ParsedCertificate;
 use crate::x509;
 
@@ -85,21 +85,6 @@ pub trait Signer: Debug + Send + Sync {
     /// Reveals which scheme will be used when you call [`Self::sign()`].
     fn scheme(&self) -> SignatureScheme;
 }
-
-// /// A packaged-together certificate chain, matching `SigningKey` and
-// /// optional stapled OCSP response.
-// #[derive(Clone, Debug)]
-// pub struct CertifiedKey {
-//     /// The certificate chain.
-//     pub cert: Vec<CertificateDer<'static>>,
-//
-//     /// The certified key.
-//     pub key: Arc<dyn SigningKey>,
-//
-//     /// An optional OCSP response from the certificate issuer,
-//     /// attesting to its continued validity.
-//     pub ocsp: Option<Vec<u8>>,
-// }
 
 #[derive(Clone, Debug)]
 pub enum CertifiedKey {

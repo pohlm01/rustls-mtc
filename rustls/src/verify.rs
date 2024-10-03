@@ -7,7 +7,7 @@ use crate::enums::SignatureScheme;
 use crate::error::{Error, InvalidMessage};
 use crate::msgs::base::PayloadU16;
 use crate::msgs::codec::{Codec, Reader};
-use crate::msgs::handshake::DistinguishedName;
+use crate::msgs::handshake::{BikeshedCertificate, DistinguishedName};
 
 // Marker types.  These are used to bind the fact some verification
 // (certificate chain or handshake signature) has taken place into
@@ -88,6 +88,15 @@ pub trait ServerCertVerifier: Debug + Send + Sync {
         now: UnixTime,
     ) -> Result<ServerCertVerified, Error>;
 
+    fn verify_server_mtc_cert(
+        &self,
+        server_name: &ServerName<'_>,
+        cert: &BikeshedCertificate<'_>,
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
+        unimplemented!()
+    }
+
     /// Verify a signature allegedly by the given server certificate.
     ///
     /// `message` is not hashed, and needs hashing during the verification.
@@ -130,6 +139,15 @@ pub trait ServerCertVerifier: Debug + Send + Sync {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error>;
+
+    fn verify_tls13_signature_mtc(
+        &self,
+        message: &[u8],
+        cert: &BikeshedCertificate<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        unimplemented!()
+    }
 
     /// Return the list of SignatureSchemes that this verifier will handle,
     /// in `verify_tls12_signature` and `verify_tls13_signature` calls.

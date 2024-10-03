@@ -148,7 +148,7 @@ impl fmt::Debug for PayloadU16 {
 }
 
 /// An arbitrary, unknown-content, u8-length-prefixed payload
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct PayloadU8(pub(crate) Vec<u8>);
 
 impl PayloadU8 {

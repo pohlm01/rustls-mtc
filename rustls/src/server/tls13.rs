@@ -11,7 +11,7 @@ use super::hs::{self, HandshakeHashOrBuffer, ServerContext};
 use super::server_conn::ServerConnectionData;
 use crate::check::{inappropriate_handshake_message, inappropriate_message};
 use crate::common_state::{
-    CommonState, HandshakeFlightTls13, HandshakeKind, Protocol, Side, State,
+    CommonState, HandshakeFlightTls13, HandshakeKind, Protocol, Side, State, X509orBikeshed,
 };
 use crate::conn::ConnectionRandoms;
 use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion};
@@ -48,11 +48,11 @@ mod client_hello {
         ServerExtension, ServerHelloPayload, SessionId,
     };
     use crate::server::common::{ActiveCertifiedKey, Certificate};
-    use crate::sign;
     use crate::tls13::key_schedule::{
         KeyScheduleEarly, KeyScheduleHandshake, KeySchedulePreHandshake,
     };
     use crate::verify::DigitallySignedStruct;
+    use crate::{sign, CertificateType};
 
     #[derive(PartialEq)]
     pub(super) enum EarlyDataDecision {
@@ -367,6 +367,7 @@ mod client_hello {
                 resumedata.as_ref(),
                 self.extra_exts,
                 &self.config,
+                server_key.get_cert().certificate_type(),
             )?;
 
             let doing_client_auth = if full_handshake {
@@ -380,7 +381,7 @@ mod client_hello {
                         false,
                     ),
                     Certificate::Bikeshed(cert) => {
-                        CertificatePayloadTls13::from_bikeshed_certificate(cert, false)
+                        CertificatePayloadTls13::from_bikeshed_certificate(cert.clone(), false)
                     }
                 };
                 if let Some(compressor) = cert_compressor {
@@ -680,6 +681,7 @@ mod client_hello {
         resumedata: Option<&persist::ServerSessionValue>,
         extra_exts: Vec<ServerExtension>,
         config: &ServerConfig,
+        certificate_type: CertificateType,
     ) -> Result<EarlyDataDecision, Error> {
         let mut ep = hs::ExtensionProcessing::new();
         ep.process_common(config, cx, ocsp_response, hello, resumedata, extra_exts)?;
@@ -687,6 +689,11 @@ mod client_hello {
         let early_data = decide_if_early_data_allowed(cx, hello, resumedata, suite, config);
         if early_data == EarlyDataDecision::Accepted {
             ep.exts.push(ServerExtension::EarlyData);
+        }
+
+        if !matches!(certificate_type, CertificateType::X509) {
+            ep.exts
+                .push(ServerExtension::ServerCertificateType(certificate_type))
         }
 
         let ee = HandshakeMessagePayload {
@@ -1173,7 +1180,8 @@ impl State<ServerConnectionData> for ExpectCertificateVerify {
         }
 
         trace!("client CertificateVerify OK");
-        cx.common.peer_certificates = Some(self.client_cert);
+        // TODO @max make client authentication possible with Bikeshed Certs
+        cx.common.peer_certificates = Some(X509orBikeshed::X509(self.client_cert));
 
         self.transcript.add_message(&m);
         Ok(Box::new(ExpectFinished {

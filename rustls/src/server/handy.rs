@@ -319,6 +319,62 @@ mod sni_resolver {
 #[cfg(any(feature = "std", feature = "hashbrown"))]
 pub use sni_resolver::ResolvesServerCertUsingSni;
 
+mod tai_resolver {
+    use crate::server::ClientHello;
+    use crate::{server, sign, Error, TrustAnchorIdentifier};
+    use core::fmt::Debug;
+    use log::warn;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// Something that resolves do different cert chains/keys based
+    /// on client-supplied supported Trust Anchor Identifiers.
+    #[derive(Debug)]
+    pub struct ResolvesServerCertUsingTai {
+        by_tai: HashMap<TrustAnchorIdentifier, Arc<sign::CertifiedKey>>,
+    }
+
+    impl ResolvesServerCertUsingTai {
+        /// Create a new and empty (i.e., knows no certificates) resolver.
+        pub fn new() -> Self {
+            Self {
+                by_tai: HashMap::new(),
+            }
+        }
+
+        /// Add a new [`sign::CertifiedKey`] to be used for the given TAI.
+        ///
+        /// This function fails if `tai` is not a valid TrustAnchorIdentifier or if the certificate
+        /// chain is syntactically faulty.
+        pub fn add(&mut self, tai: &str, ck: sign::CertifiedKey) -> Result<(), Error> {
+            // TODO @max proper error handling and check if provided certificates are valid, etc.
+            let tai: TrustAnchorIdentifier = tai.parse().unwrap();
+
+            self.by_tai.insert(tai, Arc::new(ck));
+            Ok(())
+        }
+    }
+
+    impl server::ResolvesServerCert for ResolvesServerCertUsingTai {
+        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
+            if let Some(tais) = client_hello.supported_trust_anchors() {
+                for tai in tais {
+                    if let Some(cert) = self.by_tai.get(tai) {
+                        return Some(Arc::clone(cert));
+                    }
+                }
+                None
+            } else {
+                // This kind of resolver requires TAI
+                warn!("client did not provide trust_anchors, could not resolve certificate");
+                None
+            }
+        }
+    }
+}
+
+pub(crate) use tai_resolver::ResolvesServerCertUsingTai;
+
 #[cfg(test)]
 mod tests {
     use std::vec;

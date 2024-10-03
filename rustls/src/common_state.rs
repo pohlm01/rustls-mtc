@@ -1,8 +1,3 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-
-use pki_types::CertificateDer;
-
 use crate::crypto::SupportedKxGroup;
 use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion};
 use crate::error::{Error, InvalidMessage, PeerMisbehaved};
@@ -10,10 +5,10 @@ use crate::hash_hs::HandshakeHash;
 use crate::log::{debug, error, warn};
 use crate::msgs::alert::AlertMessagePayload;
 use crate::msgs::base::Payload;
-use crate::msgs::codec::Codec;
+use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::{AlertLevel, CertificateType, KeyUpdateRequest};
 use crate::msgs::fragmenter::MessageFragmenter;
-use crate::msgs::handshake::{CertificateChain, HandshakeMessagePayload};
+use crate::msgs::handshake::{BikeshedCertificate, CertificateChain, HandshakeMessagePayload};
 use crate::msgs::message::{
     Message, MessagePayload, OutboundChunks, OutboundOpaqueMessage, OutboundPlainMessage,
     PlainMessage,
@@ -25,6 +20,90 @@ use crate::tls12::ConnectionSecrets;
 use crate::unbuffered::{EncryptError, InsufficientSizeError};
 use crate::vecbuf::ChunkVecBuffer;
 use crate::{quic, record_layer};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use pki_types::CertificateDer;
+
+#[derive(Debug, Clone)]
+pub enum X509orBikeshed<'a> {
+    X509(CertificateChain<'a>),
+    Bikeshed(BikeshedCertificate<'a>),
+}
+
+impl<'a> From<Vec<CertificateDer<'a>>> for X509orBikeshed<'a> {
+    fn from(chain: Vec<CertificateDer<'a>>) -> Self {
+        Self::X509(CertificateChain(chain))
+    }
+}
+
+impl<'a> From<BikeshedCertificate<'a>> for X509orBikeshed<'a> {
+    fn from(cert: BikeshedCertificate<'a>) -> Self {
+        Self::Bikeshed(cert)
+    }
+}
+
+impl PartialEq for X509orBikeshed<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Self::X509(data) => {
+                if let Self::X509(other) = other {
+                    data.0 == other.0
+                } else {
+                    false
+                }
+            }
+            Self::Bikeshed(data) => {
+                if let Self::Bikeshed(other) = other {
+                    data.0 == other.0
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Codec<'a> for X509orBikeshed<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        match self {
+            X509orBikeshed::X509(chain) => {
+                0u8.encode(bytes);
+                chain.encode(bytes);
+            }
+            X509orBikeshed::Bikeshed(cert) => {
+                1u8.encode(bytes);
+                cert.encode(bytes);
+            }
+        }
+    }
+
+    fn read(reader: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        let cert_type = u8::read(reader)?;
+        match cert_type {
+            0 => Ok(Self::X509(CertificateChain::read(reader)?.into_owned())),
+            1 => Ok(Self::Bikeshed(
+                BikeshedCertificate::read(reader)?.into_owned(),
+            )),
+            _ => Err(InvalidMessage::InvalidContentType),
+        }
+    }
+}
+
+impl X509orBikeshed<'_> {
+    pub(crate) fn into_owned(self) -> X509orBikeshed<'static> {
+        match self {
+            Self::X509(x) => X509orBikeshed::X509(x.into_owned()),
+            Self::Bikeshed(b) => X509orBikeshed::Bikeshed(b.into_owned()),
+        }
+    }
+}
+
+impl Default for X509orBikeshed<'_> {
+    fn default() -> Self {
+        Self::X509(Default::default())
+    }
+}
 
 /// Connection state common to both client and server connections.
 pub struct CommonState {
@@ -44,7 +123,7 @@ pub struct CommonState {
     pub(crate) has_received_close_notify: bool,
     #[cfg(feature = "std")]
     pub(crate) has_seen_eof: bool,
-    pub(crate) peer_certificates: Option<CertificateChain<'static>>,
+    pub(crate) peer_certificates: Option<X509orBikeshed<'static>>,
     message_fragmenter: MessageFragmenter,
     pub(crate) received_plaintext: ChunkVecBuffer,
     pub(crate) sendable_tls: ChunkVecBuffer,
@@ -125,8 +204,8 @@ impl CommonState {
     /// if client authentication was completed.
     ///
     /// The return value is None until this value is available.
-    pub fn peer_certificates(&self) -> Option<&[CertificateDer<'static>]> {
-        self.peer_certificates.as_deref()
+    pub fn peer_certificates(&self) -> Option<&X509orBikeshed<'static>> {
+        self.peer_certificates.as_ref()
     }
 
     /// Retrieves the protocol agreed with the peer via ALPN.

@@ -1,7 +1,7 @@
-use mtc_verifier::Certificate as BikeshedCertificate;
 use pki_types::CertificateDer;
 
-use crate::sign;
+use crate::msgs::handshake::BikeshedCertificate;
+use crate::{sign, CertificateType};
 
 /// ActiveCertifiedKey wraps [`sign::CertifiedKey`] and tracks OSCP state in a single handshake.
 pub(super) struct ActiveCertifiedKey<'a> {
@@ -19,6 +19,13 @@ impl<'a> Certificate<'a> {
         match self {
             Certificate::X509(chain) => Some(chain),
             Certificate::Bikeshed(_) => None,
+        }
+    }
+
+    pub(crate) fn certificate_type(&self) -> CertificateType {
+        match self {
+            Certificate::X509(_) => CertificateType::X509,
+            Certificate::Bikeshed(_) => CertificateType::Bikeshed,
         }
     }
 }

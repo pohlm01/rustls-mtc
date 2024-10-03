@@ -156,7 +156,7 @@ impl ExtensionType {
 enum_builder! {
 
     @U8
-    pub(crate) enum CertificateType {
+    pub enum CertificateType {
         X509 => 0x00,
         RawPublicKey => 0x02,
         // TODO replace with correct enum value

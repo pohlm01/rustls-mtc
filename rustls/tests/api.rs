@@ -36,7 +36,7 @@ use rustls::{
     ConnectionCommon, ConnectionTrafficSecrets, ContentType, DistinguishedName, Error,
     HandshakeKind, HandshakeType, InconsistentKeys, InvalidMessage, KeyLog, NamedGroup,
     PeerIncompatible, PeerMisbehaved, ProtocolVersion, ServerConfig, ServerConnection, SideData,
-    SignatureScheme, Stream, StreamOwned, SupportedCipherSuite,
+    SignatureScheme, Stream, StreamOwned, SupportedCipherSuite, X509orBikeshed,
 };
 
 use super::*;
@@ -437,7 +437,7 @@ fn client_can_get_server_cert() {
             do_handshake(&mut client, &mut server);
 
             let certs = client.peer_certificates();
-            assert_eq!(certs, Some(kt.get_chain().as_slice()));
+            assert_eq!(certs, Some(&kt.get_chain().into()));
         }
     }
 }
@@ -477,7 +477,7 @@ fn server_can_get_client_cert() {
             do_handshake(&mut client, &mut server);
 
             let certs = server.peer_certificates();
-            assert_eq!(certs, Some(kt.get_client_chain().as_slice()));
+            assert_eq!(certs, Some(&kt.get_client_chain().into()));
         }
     }
 }
@@ -632,7 +632,13 @@ fn server_allow_any_anonymous_or_authenticated_client() {
             do_handshake(&mut client, &mut server);
 
             let certs = server.peer_certificates();
-            assert_eq!(certs, client_cert_chain.as_deref());
+            assert_eq!(
+                certs,
+                client_cert_chain
+                    .clone()
+                    .map(Into::<X509orBikeshed>::into)
+                    .as_ref()
+            );
         }
     }
 }
@@ -4020,9 +4026,13 @@ fn tls13_stateful_resumption() {
     assert_eq!(storage.gets(), 0);
     assert_eq!(storage.takes(), 0);
     assert_eq!(
-        client
-            .peer_certificates()
-            .map(|certs| certs.len()),
+        client.peer_certificates().map(|certs| {
+            if let X509orBikeshed::X509(chain) = certs {
+                chain.len()
+            } else {
+                0
+            }
+        }),
         Some(3)
     );
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Full));
@@ -4037,9 +4047,13 @@ fn tls13_stateful_resumption() {
     assert_eq!(storage.gets(), 0);
     assert_eq!(storage.takes(), 1);
     assert_eq!(
-        client
-            .peer_certificates()
-            .map(|certs| certs.len()),
+        client.peer_certificates().map(|certs| {
+            if let X509orBikeshed::X509(chain) = certs {
+                chain.len()
+            } else {
+                0
+            }
+        }),
         Some(3)
     );
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Resumed));
@@ -4054,9 +4068,13 @@ fn tls13_stateful_resumption() {
     assert_eq!(storage.gets(), 0);
     assert_eq!(storage.takes(), 2);
     assert_eq!(
-        client
-            .peer_certificates()
-            .map(|certs| certs.len()),
+        client.peer_certificates().map(|certs| {
+            if let X509orBikeshed::X509(chain) = certs {
+                chain.len()
+            } else {
+                0
+            }
+        }),
         Some(3)
     );
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Resumed));
@@ -4082,9 +4100,13 @@ fn tls13_stateless_resumption() {
     assert_eq!(storage.gets(), 0);
     assert_eq!(storage.takes(), 0);
     assert_eq!(
-        client
-            .peer_certificates()
-            .map(|certs| certs.len()),
+        client.peer_certificates().map(|certs| {
+            if let X509orBikeshed::X509(chain) = certs {
+                chain.len()
+            } else {
+                0
+            }
+        }),
         Some(3)
     );
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Full));
@@ -4099,9 +4121,13 @@ fn tls13_stateless_resumption() {
     assert_eq!(storage.gets(), 0);
     assert_eq!(storage.takes(), 0);
     assert_eq!(
-        client
-            .peer_certificates()
-            .map(|certs| certs.len()),
+        client.peer_certificates().map(|certs| {
+            if let X509orBikeshed::X509(chain) = certs {
+                chain.len()
+            } else {
+                0
+            }
+        }),
         Some(3)
     );
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Resumed));
@@ -4116,9 +4142,13 @@ fn tls13_stateless_resumption() {
     assert_eq!(storage.gets(), 0);
     assert_eq!(storage.takes(), 0);
     assert_eq!(
-        client
-            .peer_certificates()
-            .map(|certs| certs.len()),
+        client.peer_certificates().map(|certs| {
+            if let X509orBikeshed::X509(chain) = certs {
+                chain.len()
+            } else {
+                0
+            }
+        }),
         Some(3)
     );
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Resumed));

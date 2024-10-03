@@ -1,11 +1,12 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-
+use log::warn;
 use pki_types::{CertificateDer, CertificateRevocationListDer, ServerName, UnixTime};
 use webpki::{CertRevocationList, ExpirationPolicy, RevocationCheckDepth, UnknownStatusPolicy};
 
 use crate::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use crate::log::trace;
+use crate::msgs::handshake::BikeshedCertificate;
 use crate::verify::{
     DigitallySignedStruct, HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
@@ -277,6 +278,16 @@ impl ServerCertVerifier for WebPkiServerVerifier {
         Ok(ServerCertVerified::assertion())
     }
 
+    fn verify_server_mtc_cert(
+        &self,
+        server_name: &ServerName<'_>,
+        cert: &BikeshedCertificate<'_>,
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
+        warn!("skipped verifying the MTC certificate");
+        Ok(ServerCertVerified::assertion())
+    }
+
     fn verify_tls12_signature(
         &self,
         message: &[u8],
@@ -293,6 +304,16 @@ impl ServerCertVerifier for WebPkiServerVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         verify_tls13_signature(message, cert, dss, &self.supported)
+    }
+
+    fn verify_tls13_signature_mtc(
+        &self,
+        message: &[u8],
+        cert: &BikeshedCertificate<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        warn!("skipped verifying the MTC signature");
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {

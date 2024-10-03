@@ -4,10 +4,10 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::num::ParseIntError;
 use core::ops::Deref;
+use core::str::FromStr;
 use core::{fmt, iter};
-
-use mtc_verifier::Certificate as BikeshedCertificate;
 use pki_types::{CertificateDer, DnsName};
 
 #[cfg(feature = "tls12")]
@@ -1190,8 +1190,8 @@ impl ClientHelloPayload {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct TrustAnchorIdentifier(PayloadU8);
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TrustAnchorIdentifier(PayloadU8);
 
 impl<'a> Codec<'a> for TrustAnchorIdentifier {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -1200,6 +1200,56 @@ impl<'a> Codec<'a> for TrustAnchorIdentifier {
 
     fn read(reader: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
         Ok(Self(PayloadU8::read(reader)?))
+    }
+}
+
+impl FromStr for TrustAnchorIdentifier {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(s.split('.')
+            .map(|s| s.parse::<u32>())
+            .collect::<Result<Vec<u32>, _>>()?
+            .into())
+    }
+}
+
+// TODO @max remove duplicate code in mtc_verifier and add checks if it is a valid TAI
+impl<T: IntoIterator<Item = u32>> From<T> for TrustAnchorIdentifier {
+    fn from(segments: T) -> Self {
+        let mut res = Vec::new();
+        for segment in segments {
+            for j in (0..4).rev() {
+                let cur = (segment >> (j * 7)) as u8;
+                if cur != 0 || j == 0 {
+                    let mut byte: u8 = cur & 0x7F;
+                    if j != 0 {
+                        byte |= 0x80;
+                    }
+                    res.push(byte);
+                }
+            }
+        }
+        Self(PayloadU8(res))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BikeshedCertificate<'a>(pub(crate) PayloadU24<'a>);
+
+impl BikeshedCertificate<'_> {
+    pub(crate) fn into_owned(self) -> BikeshedCertificate<'static> {
+        BikeshedCertificate(self.0.into_owned())
+    }
+}
+
+impl<'a> Codec<'a> for BikeshedCertificate<'a> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes)
+    }
+
+    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+        Ok(Self(PayloadU24::read(r)?))
     }
 }
 
@@ -1648,9 +1698,9 @@ impl<'a> Codec<'a> for CertificateEntry<'a> {
 }
 
 impl<'a> CertificateEntry<'a> {
-    pub(crate) fn new(cert: Vec<u8>) -> Self {
+    pub(crate) fn new(cert: PayloadU24<'a>) -> Self {
         Self {
-            cert: PayloadU24(Payload::Owned(cert)),
+            cert,
             exts: Vec::new(),
         }
     }
@@ -1675,7 +1725,9 @@ impl<'a> CertificateEntry<'a> {
     }
 
     pub(crate) fn has_unknown_extension(&self) -> bool {
-        self.exts.iter().any(|ext| matches!(ext, CertificateExtension::Unknown(_)))
+        self.exts
+            .iter()
+            .any(|ext| matches!(ext, CertificateExtension::Unknown(_)))
     }
 
     pub(crate) fn ocsp_response(&self) -> Option<&[u8]> {
@@ -1738,7 +1790,7 @@ impl<'a> CertificatePayloadTls13<'a> {
                     .chain(iter::repeat(None)),
             )
             .map(|(cert, ocsp)| {
-                let mut e = CertificateEntry::new(cert.to_vec());
+                let mut e = CertificateEntry::new(PayloadU24(Payload::Owned(cert.to_vec())));
                 if let Some(ocsp) = ocsp {
                     e.exts
                         .push(CertificateExtension::CertificateStatus(
@@ -1767,10 +1819,10 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn from_bikeshed_certificate(
-        cert: &BikeshedCertificate<'_>,
+        cert: BikeshedCertificate<'a>,
         matches_requested_trust_anchors: bool,
     ) -> Self {
-        let mut entry = CertificateEntry::new(cert.encode());
+        let mut entry = CertificateEntry::new(cert.0);
         if matches_requested_trust_anchors {
             entry
                 .exts

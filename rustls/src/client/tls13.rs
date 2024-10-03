@@ -9,11 +9,12 @@ use subtle::ConstantTimeEq;
 use super::client_conn::ClientConnectionData;
 use super::hs::ClientContext;
 use crate::check::inappropriate_handshake_message;
-use crate::client::common::{ClientAuthDetails, ClientHelloDetails, ServerCertDetails};
+use crate::client::common::{ClientAuthDetails, ClientHelloDetails};
 use crate::client::ech::{self, EchState, EchStatus};
 use crate::client::{hs, ClientConfig, ClientSessionStore};
 use crate::common_state::{
     CommonState, HandshakeFlightTls13, HandshakeKind, KxState, Protocol, Side, State,
+    X509orBikeshed,
 };
 use crate::conn::ConnectionRandoms;
 use crate::crypto::ActiveKeyExchange;
@@ -28,9 +29,10 @@ use crate::msgs::ccs::ChangeCipherSpecPayload;
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::{ExtensionType, KeyUpdateRequest};
 use crate::msgs::handshake::{
-    CertificatePayloadTls13, ClientExtension, EchConfigPayload, HandshakeMessagePayload,
-    HandshakePayload, HasServerExtensions, NewSessionTicketPayloadTls13, PresharedKeyIdentity,
-    PresharedKeyOffer, ServerExtension, ServerHelloPayload, CERTIFICATE_MAX_SIZE_LIMIT,
+    BikeshedCertificate, CertificateChain, CertificatePayloadTls13, ClientExtension,
+    EchConfigPayload, HandshakeMessagePayload, HandshakePayload, HasServerExtensions,
+    NewSessionTicketPayloadTls13, PresharedKeyIdentity, PresharedKeyOffer, ServerExtension,
+    ServerHelloPayload, CERTIFICATE_MAX_SIZE_LIMIT,
 };
 use crate::msgs::message::{Message, MessagePayload};
 use crate::msgs::persist;
@@ -43,7 +45,7 @@ use crate::tls13::{
     construct_client_verify_message, construct_server_verify_message, Tls13CipherSuite,
 };
 use crate::verify::{self, DigitallySignedStruct};
-use crate::{compress, crypto, KeyLog};
+use crate::{compress, crypto, CertificateType, KeyLog};
 
 // Extensions we expect in plaintext in the ServerHello.
 static ALLOWED_PLAINTEXT_EXTS: &[ExtensionType] = &[
@@ -60,6 +62,54 @@ static DISALLOWED_TLS13_EXTS: &[ExtensionType] = &[
     ExtensionType::RenegotiationInfo,
     ExtensionType::ExtendedMasterSecret,
 ];
+
+#[derive(Debug)]
+pub(super) enum ServerCertDetails<'a> {
+    X509 {
+        cert_chain: CertificateChain<'a>,
+        ocsp_response: Vec<u8>,
+    },
+    Bikeshed {
+        cert: BikeshedCertificate<'a>,
+    },
+}
+
+impl<'a> ServerCertDetails<'a> {
+    pub(super) fn from_x509(cert_chain: CertificateChain<'a>, ocsp_response: Vec<u8>) -> Self {
+        Self::X509 {
+            cert_chain,
+            ocsp_response,
+        }
+    }
+
+    pub(super) fn from_bikeshed(cert: BikeshedCertificate<'a>) -> Self {
+        Self::Bikeshed { cert }
+    }
+
+    pub(super) fn into_certificate(self) -> X509orBikeshed<'static> {
+        match self {
+            ServerCertDetails::X509 { cert_chain, .. } => {
+                X509orBikeshed::X509(cert_chain.into_owned())
+            }
+            ServerCertDetails::Bikeshed { cert, .. } => X509orBikeshed::Bikeshed(cert.into_owned()),
+        }
+    }
+
+    pub(super) fn into_owned(self) -> ServerCertDetails<'static> {
+        match self {
+            Self::X509 {
+                cert_chain,
+                ocsp_response,
+            } => ServerCertDetails::X509 {
+                cert_chain: cert_chain.into_owned(),
+                ocsp_response,
+            },
+            Self::Bikeshed { cert } => ServerCertDetails::Bikeshed {
+                cert: cert.into_owned(),
+            },
+        }
+    }
+}
 
 pub(super) fn handle_server_hello(
     config: Arc<ClientConfig>,
@@ -1029,8 +1079,16 @@ impl State<ClientConnectionData> for ExpectCertificate {
                 PeerMisbehaved::BadCertChainExtensions,
             ));
         }
+
+        match cx.common.certificate_type {
+            CertificateType::X509 => {}
+            CertificateType::RawPublicKey => unimplemented!(),
+            CertificateType::Bikeshed => {}
+            CertificateType::Unknown(_) => unimplemented!(),
+        }
+
         let end_entity_ocsp = cert_chain.end_entity_ocsp();
-        let server_cert = ServerCertDetails::new(
+        let server_cert = ServerCertDetails::from_x509(
             cert_chain
                 .into_certificate_chain()
                 .into_owned(),
@@ -1052,6 +1110,27 @@ impl State<ClientConnectionData> for ExpectCertificate {
 
     fn into_owned(self: Box<Self>) -> hs::NextState<'static> {
         self
+    }
+}
+
+impl From<mtc_verifier::SignatureScheme> for SignatureScheme {
+    fn from(s: mtc_verifier::SignatureScheme) -> Self {
+        match s {
+            mtc_verifier::SignatureScheme::RSA_PKCS1_SHA1 => Self::RSA_PKCS1_SHA1,
+            mtc_verifier::SignatureScheme::ECDSA_SHA1_Legacy => Self::ECDSA_SHA1_Legacy,
+            mtc_verifier::SignatureScheme::RSA_PKCS1_SHA256 => Self::RSA_PKCS1_SHA256,
+            mtc_verifier::SignatureScheme::ECDSA_NISTP256_SHA256 => Self::ECDSA_NISTP256_SHA256,
+            mtc_verifier::SignatureScheme::RSA_PKCS1_SHA384 => Self::RSA_PKCS1_SHA384,
+            mtc_verifier::SignatureScheme::ECDSA_NISTP384_SHA384 => Self::ECDSA_NISTP384_SHA384,
+            mtc_verifier::SignatureScheme::RSA_PKCS1_SHA512 => Self::RSA_PKCS1_SHA512,
+            mtc_verifier::SignatureScheme::ECDSA_NISTP521_SHA512 => Self::ECDSA_NISTP521_SHA512,
+            mtc_verifier::SignatureScheme::RSA_PSS_SHA256 => Self::RSA_PSS_SHA256,
+            mtc_verifier::SignatureScheme::RSA_PSS_SHA384 => Self::RSA_PSS_SHA384,
+            mtc_verifier::SignatureScheme::RSA_PSS_SHA512 => Self::RSA_PSS_SHA512,
+            mtc_verifier::SignatureScheme::ED25519 => Self::ED25519,
+            mtc_verifier::SignatureScheme::ED448 => Self::ED448,
+            mtc_verifier::SignatureScheme::Unknown(v) => Self::Unknown(v),
+        }
     }
 }
 
@@ -1083,48 +1162,86 @@ impl State<ClientConnectionData> for ExpectCertificateVerify<'_> {
             HandshakePayload::CertificateVerify
         )?;
 
-        trace!("Server cert is {:?}", self.server_cert.cert_chain);
+        trace!("Server cert is {:?}", self.server_cert);
 
+        // TODO @max probably split this match into one functions for each arm
         // 1. Verify the certificate chain.
-        let (end_entity, intermediates) = self
-            .server_cert
-            .cert_chain
-            .split_first()
-            .ok_or(Error::NoCertificatesPresented)?;
+        let (cert_verified, sig_verified) = match self.server_cert {
+            ServerCertDetails::X509 {
+                ref cert_chain,
+                ref ocsp_response,
+            } => {
+                let (end_entity, intermediates) = cert_chain
+                    .split_first()
+                    .ok_or(Error::NoCertificatesPresented)?;
 
-        let now = self.config.current_time()?;
+                let now = self.config.current_time()?;
 
-        let cert_verified = self
-            .config
-            .verifier
-            .verify_server_cert(
-                end_entity,
-                intermediates,
-                &self.server_name,
-                &self.server_cert.ocsp_response,
-                now,
-            )
-            .map_err(|err| {
-                cx.common
-                    .send_cert_verify_error_alert(err)
-            })?;
+                let cert_verified = self
+                    .config
+                    .verifier
+                    .verify_server_cert(
+                        end_entity,
+                        intermediates,
+                        &self.server_name,
+                        ocsp_response,
+                        now,
+                    )
+                    .map_err(|err| {
+                        cx.common
+                            .send_cert_verify_error_alert(err)
+                    })?;
 
-        // 2. Verify their signature on the handshake.
-        let handshake_hash = self.transcript.current_hash();
-        let sig_verified = self
-            .config
-            .verifier
-            .verify_tls13_signature(
-                construct_server_verify_message(&handshake_hash).as_ref(),
-                end_entity,
-                cert_verify,
-            )
-            .map_err(|err| {
-                cx.common
-                    .send_cert_verify_error_alert(err)
-            })?;
+                // 2. Verify their signature on the handshake.
+                let handshake_hash = self.transcript.current_hash();
+                let sig_verified = self
+                    .config
+                    .verifier
+                    .verify_tls13_signature(
+                        construct_server_verify_message(&handshake_hash).as_ref(),
+                        end_entity,
+                        cert_verify,
+                    )
+                    .map_err(|err| {
+                        cx.common
+                            .send_cert_verify_error_alert(err)
+                    })?;
 
-        cx.common.peer_certificates = Some(self.server_cert.cert_chain.into_owned());
+                (cert_verified, sig_verified)
+            }
+            ServerCertDetails::Bikeshed { ref cert } => {
+                let now = self.config.current_time()?;
+
+                let cert_verified = self
+                    .config
+                    .verifier
+                    .verify_server_mtc_cert(&self.server_name, cert, now)
+                    .map_err(|err| {
+                        cx.common
+                            .send_cert_verify_error_alert(err)
+                    })?;
+
+                // 2. Verify their signature on the handshake.
+                let handshake_hash = self.transcript.current_hash();
+                // TODO @max remove `unwrap()`s
+                let sig_verified = self
+                    .config
+                    .verifier
+                    .verify_tls13_signature_mtc(
+                        construct_server_verify_message(&handshake_hash).as_ref(),
+                        cert,
+                        cert_verify,
+                    )
+                    .map_err(|err| {
+                        cx.common
+                            .send_cert_verify_error_alert(err)
+                    })?;
+
+                (cert_verified, sig_verified)
+            }
+        };
+
+        cx.common.peer_certificates = Some(self.server_cert.into_certificate());
         self.transcript.add_message(&m);
 
         Ok(Box::new(ExpectFinished {
@@ -1168,7 +1285,7 @@ fn emit_compressed_certificate_tls13(
             CertificatePayloadTls13::from_x509_certificates(cert.iter(), None, false)
         }
         CertifiedKey::Bikeshed { cert, .. } => {
-            CertificatePayloadTls13::from_bikeshed_certificate(cert, false)
+            CertificatePayloadTls13::from_bikeshed_certificate(cert.clone(), false)
         }
     };
     cert_payload.context = PayloadU8::new(auth_context.clone().unwrap_or_default());
@@ -1197,7 +1314,7 @@ fn emit_certificate_tls13(
             CertificatePayloadTls13::from_x509_certificates(cert.iter(), None, false)
         }
         Some(CertifiedKey::Bikeshed { cert, .. }) => {
-            CertificatePayloadTls13::from_bikeshed_certificate(cert, false)
+            CertificatePayloadTls13::from_bikeshed_certificate(cert.clone(), false)
         }
         None => CertificatePayloadTls13::empty(),
     };

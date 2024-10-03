@@ -9,11 +9,13 @@ use crate::msgs::handshake::{CertificateChain, DistinguishedName, ServerExtensio
 use crate::{compress, sign, SignatureScheme};
 
 #[derive(Debug)]
+#[cfg(feature = "tls12")]
 pub(super) struct ServerCertDetails<'a> {
     pub(super) cert_chain: CertificateChain<'a>,
     pub(super) ocsp_response: Vec<u8>,
 }
 
+#[cfg(feature = "tls12")]
 impl<'a> ServerCertDetails<'a> {
     pub(super) fn new(cert_chain: CertificateChain<'a>, ocsp_response: Vec<u8>) -> Self {
         Self {
