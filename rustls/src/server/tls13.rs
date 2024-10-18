@@ -693,7 +693,7 @@ mod client_hello {
 
         if !matches!(certificate_type, CertificateType::X509) {
             ep.exts
-                .push(ServerExtension::ServerCertificateType(certificate_type))
+                .push(ServerExtension::ServerCertType(certificate_type))
         }
 
         let ee = HandshakeMessagePayload {

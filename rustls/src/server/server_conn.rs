@@ -122,6 +122,11 @@ pub trait ResolvesServerCert: Debug + Send + Sync {
     ///
     /// Return `None` to abort the handshake.
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>>;
+
+    /// Return true when the server only supports raw public keys.
+    fn only_raw_public_keys(&self) -> bool {
+        false
+    }
 }
 
 /// A struct representing the received Client Hello
@@ -129,10 +134,10 @@ pub struct ClientHello<'a> {
     server_name: &'a Option<DnsName<'a>>,
     signature_schemes: &'a [SignatureScheme],
     alpn: Option<&'a Vec<ProtocolName>>,
+    server_cert_types: Option<&'a [CertificateType]>,
+    client_cert_types: Option<&'a [CertificateType]>,
     cipher_suites: &'a [CipherSuite],
-    supported_server_certificate_types: &'a [CertificateType],
-    supported_client_certificate_types: &'a [CertificateType],
-    supported_trust_anchors: Option<&'a [TrustAnchorIdentifier]>,
+    trust_anchors: Option<&'a [TrustAnchorIdentifier]>,
 }
 
 impl<'a> ClientHello<'a> {
@@ -141,33 +146,27 @@ impl<'a> ClientHello<'a> {
         server_name: &'a Option<DnsName<'_>>,
         signature_schemes: &'a [SignatureScheme],
         alpn: Option<&'a Vec<ProtocolName>>,
+        server_cert_types: Option<&'a [CertificateType]>,
+        client_cert_types: Option<&'a [CertificateType]>,
         cipher_suites: &'a [CipherSuite],
-        supported_server_certificate_types: &'a [CertificateType],
-        supported_client_certificate_types: &'a [CertificateType],
-        supported_trust_anchors: Option<&'a [TrustAnchorIdentifier]>,
+        trust_anchors: Option<&'a [TrustAnchorIdentifier]>,
     ) -> Self {
         trace!("sni {:?}", server_name);
         trace!("sig schemes {:?}", signature_schemes);
         trace!("alpn protocols {:?}", alpn);
+        trace!("server cert types {:?}", server_cert_types);
+        trace!("client cert types {:?}", client_cert_types);
         trace!("cipher suites {:?}", cipher_suites);
-        trace!(
-            "supported server certificate types {:?}",
-            supported_server_certificate_types
-        );
-        trace!(
-            "supported client certificate types {:?}",
-            supported_client_certificate_types
-        );
-        trace!("supported trust anchors {:?}", supported_trust_anchors);
+        trace!("trust anchors {:?}", trust_anchors);
 
         ClientHello {
             server_name,
             signature_schemes,
             alpn,
+            server_cert_types,
+            client_cert_types,
             cipher_suites,
-            supported_server_certificate_types,
-            supported_client_certificate_types,
-            supported_trust_anchors,
+            trust_anchors,
         }
     }
 
@@ -217,14 +216,22 @@ impl<'a> ClientHello<'a> {
         self.cipher_suites
     }
 
-    pub fn supported_server_certificate_types(&self) -> &[CertificateType] {
-        self.supported_server_certificate_types
+    /// Get the server certificate types offered in the ClientHello.
+    ///
+    /// Returns `None` if the client did not include a certificate type extension.
+    pub fn server_cert_types(&self) -> Option<&'a [CertificateType]> {
+        self.server_cert_types
     }
-    pub fn supported_client_certificate_types(&self) -> &[CertificateType] {
-        self.supported_client_certificate_types
+
+    /// Get the client certificate types offered in the ClientHello.
+    ///
+    /// Returns `None` if the client did not include a certificate type extension.
+    pub fn client_cert_types(&self) -> Option<&'a [CertificateType]> {
+        self.client_cert_types
     }
+
     pub fn supported_trust_anchors(&self) -> Option<&[TrustAnchorIdentifier]> {
-        self.supported_trust_anchors
+        self.trust_anchors
     }
 }
 
@@ -749,7 +756,7 @@ mod connection {
     ///     let conn = accepted
     ///         .into_connection(config)
     ///         .unwrap();
-
+    ///
     ///     // Proceed with handling the ServerConnection.
     /// }
     /// # }
@@ -939,13 +946,9 @@ impl Accepted {
             &self.connection.core.data.sni,
             &self.sig_schemes,
             payload.alpn_extension(),
+            payload.server_certificate_extension(),
+            payload.client_certificate_extension(),
             &payload.cipher_suites,
-            payload
-                .server_certificate_type_extension()
-                .unwrap_or(&[CertificateType::X509]),
-            payload
-                .client_certificate_type_extension()
-                .unwrap_or(&[CertificateType::X509]),
             payload.trust_anchors_extension(),
         )
     }

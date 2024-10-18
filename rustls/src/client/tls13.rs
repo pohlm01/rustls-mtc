@@ -472,6 +472,8 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
 
         validate_encrypted_extensions(cx.common, &self.hello, exts)?;
         hs::process_alpn_protocol(cx.common, &self.config, exts.alpn_protocol())?;
+        hs::process_client_cert_type_extension(cx.common, &self.config, exts.client_cert_type())?;
+        hs::process_server_cert_type_extension(cx.common, &self.config, exts.server_cert_type())?;
 
         let ech_retry_configs = match (cx.data.ech_status, exts.server_ech_extension()) {
             // If we didn't offer ECH, or ECH was accepted, but the server sent an ECH encrypted
@@ -500,11 +502,6 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
                 }
             }
         }
-
-        cx.common.certificate_type = exts
-            .selected_server_certificate_type()
-            .unwrap_or(CertificateType::X509);
-
         if let Some(resuming_session) = self.resuming_session {
             let was_early_traffic = cx.common.early_traffic;
             if was_early_traffic {
@@ -1119,6 +1116,7 @@ impl State<ClientConnectionData> for ExpectCertificate {
     }
 }
 
+// TODO @max use single/common type
 impl From<mtc_verifier::SignatureScheme> for SignatureScheme {
     fn from(s: mtc_verifier::SignatureScheme) -> Self {
         match s {

@@ -311,13 +311,9 @@ impl ExpectClientHello {
         sig_schemes
             .retain(|scheme| suites::compatible_sigscheme_for_suites(*scheme, &client_suites));
 
-        let supported_server_certificate_type = client_hello
-            .server_certificate_type_extension()
-            .unwrap_or(&[CertificateType::X509]);
-        let supported_client_certificate_type = client_hello
-            .client_certificate_type_extension()
-            .unwrap_or(&[CertificateType::X509]);
-        let supported_trust_anchors = client_hello.trust_anchors_extension();
+        let server_certificate_type = client_hello.server_certificate_extension();
+        let client_certificate_type = client_hello.client_certificate_extension();
+        let trust_anchors = client_hello.trust_anchors_extension();
 
         // Choose a certificate.
         let certkey = {
@@ -325,10 +321,10 @@ impl ExpectClientHello {
                 &cx.data.sni,
                 &sig_schemes,
                 client_hello.alpn_extension(),
+                server_certificate_type,
+                client_certificate_type,
                 &client_hello.cipher_suites,
-                supported_server_certificate_type,
-                supported_client_certificate_type,
-                supported_trust_anchors,
+                trust_anchors,
             );
 
             let certkey = self

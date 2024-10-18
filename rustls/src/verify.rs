@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use pki_types::{CertificateDer, ServerName, UnixTime};
-
 use crate::enums::SignatureScheme;
 use crate::error::{Error, InvalidMessage};
 use crate::msgs::base::PayloadU16;
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::handshake::{BikeshedCertificate, DistinguishedName};
+use crate::CertificateType;
+use pki_types::{CertificateDer, ServerName, UnixTime};
 
 // Marker types.  These are used to bind the fact some verification
 // (certificate chain or handshake signature) has taken place into
@@ -154,6 +154,16 @@ pub trait ServerCertVerifier: Debug + Send + Sync {
     ///
     /// This should be in priority order, with the most preferred first.
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme>;
+
+    /// Returns whether this verifier requires raw public keys as defined
+    /// in [RFC 7250](https://tools.ietf.org/html/rfc7250).
+    fn requires_raw_public_keys(&self) -> bool {
+        false
+    }
+
+    fn supported_cert_types(&self) -> &[CertificateType] {
+        &[CertificateType::X509]
+    }
 }
 
 /// Something that can verify a client certificate chain
@@ -267,6 +277,12 @@ pub trait ClientCertVerifier: Debug + Send + Sync {
     ///
     /// This should be in priority order, with the most preferred first.
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme>;
+
+    /// Returns whether this verifier requires raw public keys as defined
+    /// in [RFC 7250](https://tools.ietf.org/html/rfc7250).
+    fn requires_raw_public_keys(&self) -> bool {
+        false
+    }
 }
 
 /// Turns off client authentication.

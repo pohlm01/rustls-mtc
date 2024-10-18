@@ -538,6 +538,10 @@ impl TlsListElement for ProtocolVersion {
     const SIZE_LEN: ListLength = ListLength::U8;
 }
 
+impl TlsListElement for CertificateType {
+    const SIZE_LEN: ListLength = ListLength::U8;
+}
+
 impl TlsListElement for CertificateCompressionAlgorithm {
     const SIZE_LEN: ListLength = ListLength::U8;
 }
@@ -557,6 +561,8 @@ pub enum ClientExtension {
     Cookie(PayloadU16),
     ExtendedMasterSecretRequest,
     CertificateStatusRequest(CertificateStatusRequest),
+    ServerCertTypes(Vec<CertificateType>),
+    ClientCertTypes(Vec<CertificateType>),
     TransportParameters(Vec<u8>),
     TransportParametersDraft(Vec<u8>),
     EarlyData,
@@ -564,18 +570,10 @@ pub enum ClientExtension {
     EncryptedClientHello(EncryptedClientHello),
     EncryptedClientHelloOuterExtensions(Vec<ExtensionType>),
 
-    // RFC 7250 (Raw Public Keys)
-    ServerCertificateType(Vec<CertificateType>),
-    ClientCertificateType(Vec<CertificateType>),
-
     // https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01
     TrustAnchors(Vec<TrustAnchorIdentifier>),
 
     Unknown(UnknownExtension),
-}
-
-impl TlsListElement for CertificateType {
-    const SIZE_LEN: ListLength = ListLength::U8;
 }
 
 impl ClientExtension {
@@ -594,6 +592,8 @@ impl ClientExtension {
             Self::Cookie(_) => ExtensionType::Cookie,
             Self::ExtendedMasterSecretRequest => ExtensionType::ExtendedMasterSecret,
             Self::CertificateStatusRequest(_) => ExtensionType::StatusRequest,
+            Self::ClientCertTypes(_) => ExtensionType::ClientCertificateType,
+            Self::ServerCertTypes(_) => ExtensionType::ServerCertificateType,
             Self::TransportParameters(_) => ExtensionType::TransportParameters,
             Self::TransportParametersDraft(_) => ExtensionType::TransportParametersDraft,
             Self::EarlyData => ExtensionType::EarlyData,
@@ -602,8 +602,6 @@ impl ClientExtension {
             Self::EncryptedClientHelloOuterExtensions(_) => {
                 ExtensionType::EncryptedClientHelloOuterExtensions
             }
-            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
-            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
             Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
@@ -631,15 +629,14 @@ impl Codec<'_> for ClientExtension {
             Self::PresharedKey(ref r) => r.encode(nested.buf),
             Self::Cookie(ref r) => r.encode(nested.buf),
             Self::CertificateStatusRequest(ref r) => r.encode(nested.buf),
+            Self::ClientCertTypes(ref r) => r.encode(nested.buf),
+            Self::ServerCertTypes(ref r) => r.encode(nested.buf),
             Self::TransportParameters(ref r) | Self::TransportParametersDraft(ref r) => {
                 nested.buf.extend_from_slice(r);
             }
             Self::CertificateCompressionAlgorithms(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
             Self::EncryptedClientHelloOuterExtensions(ref r) => r.encode(nested.buf),
-            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
-                r.encode(nested.buf)
-            }
             Self::TrustAnchors(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
@@ -672,6 +669,8 @@ impl Codec<'_> for ClientExtension {
             ExtensionType::ExtendedMasterSecret if !sub.any_left() => {
                 Self::ExtendedMasterSecretRequest
             }
+            ExtensionType::ClientCertificateType => Self::ClientCertTypes(Vec::read(&mut sub)?),
+            ExtensionType::ServerCertificateType => Self::ServerCertTypes(Vec::read(&mut sub)?),
             ExtensionType::StatusRequest => {
                 let csr = CertificateStatusRequest::read(&mut sub)?;
                 Self::CertificateStatusRequest(csr)
@@ -686,12 +685,6 @@ impl Codec<'_> for ClientExtension {
             }
             ExtensionType::EncryptedClientHelloOuterExtensions => {
                 Self::EncryptedClientHelloOuterExtensions(Vec::read(&mut sub)?)
-            }
-            ExtensionType::ServerCertificateType => {
-                Self::ServerCertificateType(Vec::read(&mut sub)?)
-            }
-            ExtensionType::ClientCertificateType => {
-                Self::ClientCertificateType(Vec::read(&mut sub)?)
             }
             ExtensionType::TrustAnchors => Self::TrustAnchors(Vec::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
@@ -746,15 +739,13 @@ pub enum ServerExtension {
     PresharedKey(u16),
     ExtendedMasterSecretAck,
     CertificateStatusAck,
+    ServerCertType(CertificateType),
+    ClientCertType(CertificateType),
     SupportedVersions(ProtocolVersion),
     TransportParameters(Vec<u8>),
     TransportParametersDraft(Vec<u8>),
     EarlyData,
     EncryptedClientHello(ServerEncryptedClientHello),
-
-    // RFC 7250 (Raw Public Keys)
-    ServerCertificateType(CertificateType),
-    ClientCertificateType(CertificateType),
 
     // https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01
     TrustAnchors(Vec<TrustAnchorIdentifier>),
@@ -772,6 +763,8 @@ impl ServerExtension {
             Self::Protocols(_) => ExtensionType::ALProtocolNegotiation,
             Self::KeyShare(_) => ExtensionType::KeyShare,
             Self::PresharedKey(_) => ExtensionType::PreSharedKey,
+            Self::ClientCertType(_) => ExtensionType::ClientCertificateType,
+            Self::ServerCertType(_) => ExtensionType::ServerCertificateType,
             Self::ExtendedMasterSecretAck => ExtensionType::ExtendedMasterSecret,
             Self::CertificateStatusAck => ExtensionType::StatusRequest,
             Self::SupportedVersions(_) => ExtensionType::SupportedVersions,
@@ -779,8 +772,6 @@ impl ServerExtension {
             Self::TransportParametersDraft(_) => ExtensionType::TransportParametersDraft,
             Self::EarlyData => ExtensionType::EarlyData,
             Self::EncryptedClientHello(_) => ExtensionType::EncryptedClientHello,
-            Self::ServerCertificateType(_) => ExtensionType::ServerCertificateType,
-            Self::ClientCertificateType(_) => ExtensionType::ClientCertificateType,
             Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
@@ -803,14 +794,13 @@ impl Codec<'_> for ServerExtension {
             Self::Protocols(ref r) => r.encode(nested.buf),
             Self::KeyShare(ref r) => r.encode(nested.buf),
             Self::PresharedKey(r) => r.encode(nested.buf),
+            Self::ClientCertType(r) => r.encode(nested.buf),
+            Self::ServerCertType(r) => r.encode(nested.buf),
             Self::SupportedVersions(ref r) => r.encode(nested.buf),
             Self::TransportParameters(ref r) | Self::TransportParametersDraft(ref r) => {
                 nested.buf.extend_from_slice(r);
             }
             Self::EncryptedClientHello(ref r) => r.encode(nested.buf),
-            Self::ClientCertificateType(ref r) | Self::ServerCertificateType(ref r) => {
-                r.encode(nested.buf)
-            }
             Self::TrustAnchors(ref r) => r.encode(nested.buf),
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
@@ -828,6 +818,12 @@ impl Codec<'_> for ServerExtension {
             ExtensionType::StatusRequest => Self::CertificateStatusAck,
             ExtensionType::RenegotiationInfo => Self::RenegotiationInfo(PayloadU8::read(&mut sub)?),
             ExtensionType::ALProtocolNegotiation => Self::Protocols(Vec::read(&mut sub)?),
+            ExtensionType::ClientCertificateType => {
+                Self::ClientCertType(CertificateType::read(&mut sub)?)
+            }
+            ExtensionType::ServerCertificateType => {
+                Self::ServerCertType(CertificateType::read(&mut sub)?)
+            }
             ExtensionType::KeyShare => Self::KeyShare(KeyShareEntry::read(&mut sub)?),
             ExtensionType::PreSharedKey => Self::PresharedKey(u16::read(&mut sub)?),
             ExtensionType::ExtendedMasterSecret => Self::ExtendedMasterSecretAck,
@@ -841,12 +837,6 @@ impl Codec<'_> for ServerExtension {
             ExtensionType::EarlyData => Self::EarlyData,
             ExtensionType::EncryptedClientHello => {
                 Self::EncryptedClientHello(ServerEncryptedClientHello::read(&mut sub)?)
-            }
-            ExtensionType::ServerCertificateType => {
-                Self::ServerCertificateType(CertificateType::read(&mut sub)?)
-            }
-            ExtensionType::ClientCertificateType => {
-                Self::ClientCertificateType(CertificateType::read(&mut sub)?)
             }
             ExtensionType::TrustAnchors => Self::TrustAnchors(Vec::read(&mut sub)?),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
@@ -1050,6 +1040,30 @@ impl ClientHelloPayload {
         }
     }
 
+    pub(crate) fn server_certificate_extension(&self) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match ext {
+            ClientExtension::ServerCertTypes(req) => Some(req),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn client_certificate_extension(&self) -> Option<&[CertificateType]> {
+        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
+        match ext {
+            ClientExtension::ClientCertTypes(req) => Some(req),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn trust_anchors_extension(&self) -> Option<&[TrustAnchorIdentifier]> {
+        let ext = self.find_extension(ExtensionType::TrustAnchors)?;
+        match *ext {
+            ClientExtension::TrustAnchors(ref tais) => Some(tais),
+            _ => None,
+        }
+    }
+
     pub(crate) fn alpn_extension(&self) -> Option<&Vec<ProtocolName>> {
         let ext = self.find_extension(ExtensionType::ALProtocolNegotiation)?;
         match *ext {
@@ -1154,30 +1168,6 @@ impl ClientHelloPayload {
         let ext = self.find_extension(ExtensionType::CompressCertificate)?;
         match *ext {
             ClientExtension::CertificateCompressionAlgorithms(ref algs) => Some(algs),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn server_certificate_type_extension(&self) -> Option<&[CertificateType]> {
-        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
-        match *ext {
-            ClientExtension::ServerCertificateType(ref types) => Some(types),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn client_certificate_type_extension(&self) -> Option<&[CertificateType]> {
-        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
-        match *ext {
-            ClientExtension::ClientCertificateType(ref types) => Some(types),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn trust_anchors_extension(&self) -> Option<&[TrustAnchorIdentifier]> {
-        let ext = self.find_extension(ExtensionType::TrustAnchors)?;
-        match *ext {
-            ClientExtension::TrustAnchors(ref tais) => Some(tais),
             _ => None,
         }
     }
@@ -1444,12 +1434,12 @@ impl HelloRetryRequest {
 
 #[derive(Clone, Debug)]
 pub struct ServerHelloPayload {
+    pub extensions: Vec<ServerExtension>,
     pub(crate) legacy_version: ProtocolVersion,
     pub(crate) random: Random,
     pub(crate) session_id: SessionId,
     pub(crate) cipher_suite: CipherSuite,
     pub(crate) compression_method: Compression,
-    pub(crate) extensions: Vec<ServerExtension>,
 }
 
 impl Codec<'_> for ServerHelloPayload {
@@ -2247,6 +2237,22 @@ pub(crate) trait HasServerExtensions {
         }
     }
 
+    fn server_cert_type(&self) -> Option<&CertificateType> {
+        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
+        match ext {
+            ServerExtension::ServerCertType(req) => Some(req),
+            _ => None,
+        }
+    }
+
+    fn client_cert_type(&self) -> Option<&CertificateType> {
+        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
+        match ext {
+            ServerExtension::ClientCertType(req) => Some(req),
+            _ => None,
+        }
+    }
+
     fn quic_params_extension(&self) -> Option<Vec<u8>> {
         let ext = self
             .find_extension(ExtensionType::TransportParameters)
@@ -2269,22 +2275,6 @@ pub(crate) trait HasServerExtensions {
     fn early_data_extension_offered(&self) -> bool {
         self.find_extension(ExtensionType::EarlyData)
             .is_some()
-    }
-
-    fn selected_server_certificate_type(&self) -> Option<CertificateType> {
-        let ext = self.find_extension(ExtensionType::ServerCertificateType)?;
-        match *ext {
-            ServerExtension::ServerCertificateType(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    fn selected_client_certificate_type(&self) -> Option<CertificateType> {
-        let ext = self.find_extension(ExtensionType::ClientCertificateType)?;
-        match *ext {
-            ServerExtension::ClientCertificateType(c) => Some(c),
-            _ => None,
-        }
     }
 }
 

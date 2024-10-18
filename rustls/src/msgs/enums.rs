@@ -452,6 +452,7 @@ pub(crate) mod tests {
             CertificateStatusType::OCSP,
             CertificateStatusType::OCSP,
         );
+        test_enum8::<CertificateType>(CertificateType::X509, CertificateType::RawPublicKey);
     }
 
     pub(crate) fn test_enum8<T: for<'a> Codec<'a>>(first: T, last: T) {

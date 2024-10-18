@@ -16,7 +16,10 @@ use crate::client::client_conn::ClientConnectionData;
 use crate::client::common::ClientHelloDetails;
 use crate::client::ech::EchState;
 use crate::client::{tls13, ClientConfig, EchMode, EchStatus};
-use crate::common_state::{CommonState, HandshakeKind, KxState, State};
+use crate::common_state::{
+    CertTypeNegotiationParams, CertificateTypeNegotiationResult, CommonState, HandshakeKind,
+    KxState, State,
+};
 use crate::conn::ConnectionRandoms;
 use crate::crypto::{ActiveKeyExchange, KeyExchangeAlgorithm};
 use crate::enums::{AlertDescription, CipherSuite, ContentType, HandshakeType, ProtocolVersion};
@@ -346,7 +349,7 @@ fn emit_client_hello_for_retry(
             .iter()
             .any(|t| !matches!(t, CertificateType::X509))
         {
-            exts.push(ClientExtension::ClientCertificateType(
+            exts.push(ClientExtension::ClientCertTypes(
                 config
                     .supported_client_certificate_types
                     .clone(),
@@ -357,7 +360,7 @@ fn emit_client_hello_for_retry(
             .iter()
             .any(|t| !matches!(t, CertificateType::X509))
         {
-            exts.push(ClientExtension::ServerCertificateType(
+            exts.push(ClientExtension::ServerCertTypes(
                 config
                     .supported_server_certificate_types
                     .clone(),
@@ -679,6 +682,44 @@ pub(super) fn process_alpn_protocol(
             .map(|v| bs_debug::BsDebug(v))
     );
     Ok(())
+}
+
+pub(super) fn process_server_cert_type_extension(
+    common: &mut CommonState,
+    config: &ClientConfig,
+    server_cert_extension: Option<&CertificateType>,
+) -> Result<(), Error> {
+    let raw_key_negotiation_params = CertTypeNegotiationParams {
+        peer_supported_type: server_cert_extension,
+        local_supported_types: config.verifier.supported_cert_types(),
+        extension_type: ExtensionType::ServerCertificateType,
+    };
+    match raw_key_negotiation_params.validate_raw_key_negotiation() {
+        CertificateTypeNegotiationResult::Err(err) => {
+            Err(common.send_fatal_alert(AlertDescription::HandshakeFailure, err))
+        }
+        _ => Ok(()),
+    }
+}
+
+pub(super) fn process_client_cert_type_extension(
+    common: &mut CommonState,
+    config: &ClientConfig,
+    client_cert_extension: Option<&CertificateType>,
+) -> Result<(), Error> {
+    let raw_key_negotation_params = CertTypeNegotiationParams {
+        peer_supported_type: client_cert_extension,
+        local_supported_types: config
+            .client_auth_cert_resolver
+            .supported_cert_types(),
+        extension_type: ExtensionType::ClientCertificateType,
+    };
+    match raw_key_negotation_params.validate_raw_key_negotiation() {
+        CertificateTypeNegotiationResult::Err(err) => {
+            Err(common.send_fatal_alert(AlertDescription::HandshakeFailure, err))
+        }
+        _ => Ok(()),
+    }
 }
 
 impl State<ClientConnectionData> for ExpectServerHello {

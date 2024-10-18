@@ -6,7 +6,7 @@ use crate::log::{debug, error, warn};
 use crate::msgs::alert::AlertMessagePayload;
 use crate::msgs::base::Payload;
 use crate::msgs::codec::{Codec, Reader};
-use crate::msgs::enums::{AlertLevel, CertificateType, KeyUpdateRequest};
+use crate::msgs::enums::{AlertLevel, CertificateType, ExtensionType, KeyUpdateRequest};
 use crate::msgs::fragmenter::MessageFragmenter;
 use crate::msgs::handshake::{BikeshedCertificate, CertificateChain, HandshakeMessagePayload};
 use crate::msgs::message::{
@@ -19,7 +19,7 @@ use crate::suites::{PartiallyExtractedSecrets, SupportedCipherSuite};
 use crate::tls12::ConnectionSecrets;
 use crate::unbuffered::{EncryptError, InsufficientSizeError};
 use crate::vecbuf::ChunkVecBuffer;
-use crate::{quic, record_layer};
+use crate::{quic, record_layer, PeerIncompatible};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
@@ -967,6 +967,50 @@ enum Limit {
     #[cfg(feature = "std")]
     Yes,
     No,
+}
+
+#[derive(Debug)]
+pub(super) struct CertTypeNegotiationParams<'a> {
+    pub(super) peer_supported_type: Option<&'a CertificateType>,
+    pub(super) local_supported_types: &'a [CertificateType],
+    pub(super) extension_type: ExtensionType,
+}
+
+impl CertTypeNegotiationParams<'_> {
+    pub(super) fn validate_raw_key_negotiation(&self) -> CertificateTypeNegotiationResult {
+        if let Some(peer_supported_type) = self.peer_supported_type {
+            let negotiated = self
+                .local_supported_types
+                .iter()
+                .find(|l| *l == peer_supported_type);
+            if let Some(certificate_type) = negotiated {
+                CertificateTypeNegotiationResult::Negotiated(self.extension_type, *certificate_type)
+            } else if self
+                .local_supported_types
+                .iter()
+                .filter(|c| !matches!(c, CertificateType::X509))
+                .count()
+                > 0
+            {
+                CertificateTypeNegotiationResult::Err(Error::PeerIncompatible(
+                    PeerIncompatible::IncompatibleCertificateTypeExtension,
+                ))
+            } else {
+                CertificateTypeNegotiationResult::Err(Error::PeerIncompatible(
+                    PeerIncompatible::UnsolicitedCertificateTypeExtension,
+                ))
+            }
+        } else {
+            CertificateTypeNegotiationResult::NotNegotiated
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum CertificateTypeNegotiationResult {
+    Negotiated(ExtensionType, CertificateType),
+    NotNegotiated,
+    Err(Error),
 }
 
 /// Tracking technically-allowed protocol actions

@@ -101,7 +101,7 @@ pub enum Error {
     /// or too large.
     BadMaxFragmentSize,
 
-    /// Specific failure cases from [`keys_match`].
+    /// Specific failure cases from [`keys_match`] or a [`crate::crypto::signer::SigningKey`] that cannot produce a corresponding public key.
     ///
     /// [`keys_match`]: crate::crypto::signer::CertifiedKey::keys_match
     InconsistentKeys(InconsistentKeys),
@@ -116,7 +116,7 @@ pub enum Error {
     Other(OtherError),
 }
 
-/// Specific failure cases from [`keys_match`].
+/// Specific failure cases from [`keys_match`] or a [`crate::crypto::signer::SigningKey`] that cannot produce a corresponding public key.
 ///
 /// [`keys_match`]: crate::crypto::signer::CertifiedKey::keys_match
 #[non_exhaustive]
@@ -304,6 +304,7 @@ impl From<PeerMisbehaved> for Error {
 pub enum PeerIncompatible {
     EcPointsExtensionRequired,
     ExtendedMasterSecretExtensionRequired,
+    IncompatibleCertificateTypeExtension,
     KeyShareExtensionRequired,
     NamedGroupsExtensionRequired,
     NoCertificateRequestSignatureSchemesInCommon,
@@ -321,6 +322,7 @@ pub enum PeerIncompatible {
     Tls12NotOfferedOrEnabled,
     Tls13RequiredForQuic,
     UncompressedEcPointsRequired,
+    UnsolicitedCertificateTypeExtension,
     ServerRejectedEncryptedClientHello(Option<Vec<EchConfigPayload>>),
 }
 
