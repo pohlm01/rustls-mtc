@@ -11,7 +11,7 @@ pub(super) struct ActiveCertifiedKey<'a> {
 
 pub(super) enum Certificate<'a> {
     X509(&'a [CertificateDer<'static>]),
-    Bikeshed(&'a BikeshedCertificate<'static>),
+    Bikeshed(&'a BikeshedCertificate),
 }
 
 impl<'a> Certificate<'a> {

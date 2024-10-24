@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use crate::server::ClientHello;
-use crate::{server, sign};
+use crate::{server, sign, CertificateType};
 
 /// Something which never stores sessions.
 #[derive(Debug)]
@@ -168,18 +168,18 @@ impl server::ProducesTickets for NeverProducesTickets {
 
 /// Something which always resolves to the same cert chain.
 #[derive(Debug)]
-pub(super) struct AlwaysResolvesChain(Arc<sign::CertifiedKey>);
+pub struct AlwaysResolvesChain(Arc<sign::CertifiedKey>);
 
 impl AlwaysResolvesChain {
     /// Creates an `AlwaysResolvesChain`, using the supplied `CertifiedKey`.
-    pub(super) fn new(certified_key: sign::CertifiedKey) -> Self {
+    pub fn new(certified_key: sign::CertifiedKey) -> Self {
         Self(Arc::new(certified_key))
     }
 
     /// Creates an `AlwaysResolvesChain`, using the supplied `CertifiedKey` and OCSP response.
     ///
     /// If non-empty, the given OCSP response is attached.
-    pub(super) fn new_with_extras(certified_key: sign::CertifiedKey, ocsp: Vec<u8>) -> Self {
+    pub fn new_with_extras(certified_key: sign::CertifiedKey, ocsp: Vec<u8>) -> Self {
         let mut r = Self::new(certified_key);
 
         {
@@ -208,7 +208,7 @@ pub struct AlwaysResolvesServerRawPublicKeys(Arc<sign::CertifiedKey>);
 
 impl AlwaysResolvesServerRawPublicKeys {
     /// Create a new `AlwaysResolvesServerRawPublicKeys` instance.
-    pub fn new(certified_key: Arc<sign::CertifiedKey>) -> Self {
+    pub(crate) fn new(certified_key: Arc<sign::CertifiedKey>) -> Self {
         Self(certified_key)
     }
 }
@@ -218,8 +218,8 @@ impl server::ResolvesServerCert for AlwaysResolvesServerRawPublicKeys {
         Some(Arc::clone(&self.0))
     }
 
-    fn only_raw_public_keys(&self) -> bool {
-        true
+    fn supported_cert_types(&self) -> &[CertificateType] {
+        &[CertificateType::RawPublicKey]
     }
 }
 
@@ -300,7 +300,6 @@ mod sni_resolver {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::msgs::enums::CertificateType;
         use crate::server::ResolvesServerCert;
 
         #[test]
@@ -336,33 +335,106 @@ mod sni_resolver {
 pub use sni_resolver::ResolvesServerCertUsingSni;
 
 mod tai_resolver {
+    use crate::crypto::CryptoProvider;
+    use crate::msgs::codec::Codec;
+    use crate::server::handy::tai_resolver::BikeshedServerFile::{CaParams, Cert, PrivateKey};
     use crate::server::ClientHello;
-    use crate::{server, sign, Error, TrustAnchorIdentifier};
+    use crate::sign::CertifiedKey;
+    use crate::{server, sign, BikeshedCertificate, Error, TrustAnchorIdentifier};
+    use alloc::vec::Vec;
     use core::fmt::Debug;
     use log::warn;
+    use pki_types::pem::PemObject;
+    use pki_types::PrivateKeyDer;
     use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::Read;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    use std::{dbg, fs, vec};
 
-    /// Something that resolves do different cert chains/keys based
-    /// on client-supplied supported Trust Anchor Identifiers.
+    /// Something that resolves do different certificates and keys based
+    /// on client-supplied supported Trust Anchor Identifiers (TAI).
+    /// If the TAI is not known to the resolver, it will use the fallback server cert resolver.
     #[derive(Debug)]
-    pub struct ResolvesServerCertUsingTai {
-        by_tai: HashMap<TrustAnchorIdentifier, Arc<sign::CertifiedKey>>,
+    pub(crate) struct ResolvesServerCertUsingTaiWithFallback {
+        by_tai: HashMap<TrustAnchorIdentifier, Arc<CertifiedKey>>,
+        mtc_dir: PathBuf,
+        crypto_provider: Arc<CryptoProvider>,
+        fallback: Arc<dyn server::ResolvesServerCert>,
     }
 
-    impl ResolvesServerCertUsingTai {
+    impl ResolvesServerCertUsingTaiWithFallback {
         /// Create a new and empty (i.e., knows no certificates) resolver.
-        pub fn new() -> Self {
-            Self {
+        pub(crate) fn new(
+            mtc_dir: PathBuf,
+            crypto_provider: Arc<CryptoProvider>,
+            fallback: Arc<dyn server::ResolvesServerCert>,
+        ) -> Self {
+            let mut res = Self {
                 by_tai: HashMap::new(),
-            }
+                mtc_dir,
+                crypto_provider,
+                fallback,
+            };
+            res.load_bikeshed_certs_from_disk();
+            res
         }
 
-        /// Add a new [`sign::CertifiedKey`] to be used for the given TAI.
+        pub fn load_bikeshed_certs_from_disk(&mut self) {
+            let files = match fs::read_dir(&self.mtc_dir) {
+                Ok(files) => files,
+                Err(err) => {
+                    warn!("Could not update Bikeshed certificates: {err}");
+                    return;
+                }
+            };
+
+            let mut certs = vec![];
+            let mut private_key = None;
+
+            for file in files.filter(Result::is_ok) {
+                // This `unwrap` is safe as all `Err` values have been filtered in the `for` loop
+                let path = file.unwrap().path();
+                if let Some(file) = read_file(&path) {
+                    match file {
+                        Cert(c) => certs.push(c),
+                        CaParams(_) => {}
+                        PrivateKey(k) => {
+                            if private_key.is_some() {
+                                warn!("Duplicate private key found");
+                            } else {
+                                private_key = Some(k);
+                            }
+                        }
+                    }
+                }
+            }
+
+            assert!(private_key.is_some());
+            let key = self
+                .crypto_provider
+                .key_provider
+                .load_private_key(private_key.unwrap())
+                .unwrap();
+
+            self.by_tai
+                .extend(certs.into_iter().map(|cert| {
+                    (
+                        dbg!(cert.tai()),
+                        Arc::new(CertifiedKey::Bikeshed {
+                            cert,
+                            key: Arc::clone(&key),
+                        }),
+                    )
+                }));
+        }
+
+        /// Add a new [`CertifiedKey`] to be used for the given TAI.
         ///
         /// This function fails if `tai` is not a valid TrustAnchorIdentifier or if the certificate
         /// chain is syntactically faulty.
-        pub fn add(&mut self, tai: &str, ck: sign::CertifiedKey) -> Result<(), Error> {
+        pub(crate) fn add(&mut self, tai: &str, ck: CertifiedKey) -> Result<(), Error> {
             // TODO @max proper error handling and check if provided certificates are valid, etc.
             let tai: TrustAnchorIdentifier = tai.parse().unwrap();
 
@@ -371,25 +443,46 @@ mod tai_resolver {
         }
     }
 
-    impl server::ResolvesServerCert for ResolvesServerCertUsingTai {
-        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
+    enum BikeshedServerFile {
+        Cert(BikeshedCertificate),
+        CaParams(Vec<u8>),
+        PrivateKey(PrivateKeyDer<'static>),
+    }
+
+    fn read_file(path: &Path) -> Option<BikeshedServerFile> {
+        let file_name = path.file_name()?.to_str()?;
+        if file_name == "ca_params" {
+            let mut f = File::open(path).ok()?;
+            let mut bytes = vec![];
+            f.read_to_end(&mut bytes).ok()?;
+            Some(CaParams(bytes))
+        } else if file_name.ends_with(".mtc") {
+            let mut f = File::open(path).ok()?;
+            let mut bytes = vec![];
+            f.read_to_end(&mut bytes).ok()?;
+            Some(Cert(BikeshedCertificate::read_bytes(&bytes).unwrap()))
+        } else if file_name.ends_with(".pem") {
+            Some(PrivateKey(dbg!(PrivateKeyDer::from_pem_file(path)).ok()?))
+        } else {
+            None
+        }
+    }
+
+    impl server::ResolvesServerCert for ResolvesServerCertUsingTaiWithFallback {
+        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
             if let Some(tais) = client_hello.supported_trust_anchors() {
                 for tai in tais {
-                    if let Some(cert) = self.by_tai.get(tai) {
+                    if let Some(cert) = self.by_tai.get(dbg!(tai)) {
                         return Some(Arc::clone(cert));
                     }
                 }
-                None
-            } else {
-                // This kind of resolver requires TAI
-                warn!("client did not provide trust_anchors, could not resolve certificate");
-                None
-            }
+            };
+            self.fallback.resolve(client_hello)
         }
     }
 }
 
-pub(crate) use tai_resolver::ResolvesServerCertUsingTai;
+pub(crate) use tai_resolver::ResolvesServerCertUsingTaiWithFallback;
 
 #[cfg(test)]
 mod tests {

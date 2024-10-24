@@ -25,10 +25,10 @@ use mio::net::{TcpListener, TcpStream};
 use rustls::crypto::{aws_lc_rs as provider, CryptoProvider};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
-use rustls::server::WebPkiClientVerifier;
-use rustls::RootCertStore;
+use rustls::server::{AlwaysResolvesChain, WebPkiClientVerifier};
+use rustls::sign::CertifiedKey;
+use rustls::{Error, InconsistentKeys, RootCertStore};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -452,7 +452,7 @@ struct Args {
     certs: PathBuf,
 
     #[clap(long)]
-    mtc_cert: Option<PathBuf>,
+    mtc_cert_dir: PathBuf,
     /// Perform client certificate revocation checking using the DER-encoded CRLs from the given
     /// files.
     #[clap(long)]
@@ -533,13 +533,6 @@ fn load_certs(filename: &Path) -> Vec<CertificateDer<'static>> {
         .collect()
 }
 
-fn load_mtc_cert(filename: &Path) -> Vec<u8> {
-    let mut res = vec![];
-    let mut f = File::open(filename).unwrap();
-    f.read_to_end(&mut res).unwrap();
-    res
-}
-
 fn load_private_key(filename: &Path) -> PrivateKeyDer<'static> {
     PrivateKeyDer::from_pem_file(filename).expect("cannot read private key file")
 }
@@ -603,34 +596,36 @@ fn make_config(args: &Args) -> Arc<rustls::ServerConfig> {
         rustls::ALL_VERSIONS.to_vec()
     };
 
-    let certs = load_certs(&args.certs);
-    let mtc_cert = args
-        .mtc_cert
-        .as_ref()
-        .map(|f| load_mtc_cert(f));
-    let privkey = load_private_key(&args.key);
-    let ocsp = load_ocsp(args.ocsp.as_deref());
-
-    let config_builder = rustls::ServerConfig::builder_with_provider(
-        CryptoProvider {
-            cipher_suites: suites,
-            ..provider::default_provider()
-        }
-        .into(),
-    )
-    .with_protocol_versions(&versions)
-    .expect("inconsistent cipher-suites/versions specified")
-    .with_client_cert_verifier(client_auth);
-
-    let mut config = if let Some(mtc_cert) = mtc_cert {
-        config_builder
-            .with_single_mtc_cert("62253.12.15.1", mtc_cert, privkey)
-            .expect("bad certificates/private key")
-    } else {
-        config_builder
-            .with_single_cert_with_ocsp(certs, privkey, ocsp)
-            .expect("bad certificates/private key")
+    let crypto_provider = CryptoProvider {
+        cipher_suites: suites,
+        ..provider::default_provider()
     };
+
+    let private_key = crypto_provider
+        .key_provider
+        .load_private_key(load_private_key(&args.key))
+        .expect("cannot load private X.509 key");
+
+    let certified_key = CertifiedKey::new(load_certs(&args.certs), private_key);
+    match certified_key.keys_match() {
+        // Don't treat unknown consistency as an error
+        Ok(()) | Err(Error::InconsistentKeys(InconsistentKeys::Unknown)) => (),
+        Err(err) => panic!("{err}"),
+    }
+
+    let fallback_resolver = AlwaysResolvesChain::new(certified_key);
+
+    let config_builder = rustls::ServerConfig::builder_with_provider(crypto_provider.into())
+        .with_protocol_versions(&versions)
+        .expect("inconsistent cipher-suites/versions specified")
+        .with_client_cert_verifier(client_auth);
+
+    let mut config = config_builder
+        .with_mtc_directory_and_x509_fallback(
+            args.mtc_cert_dir.clone(),
+            Arc::new(fallback_resolver),
+        )
+        .expect("bad certificates/private key");
 
     config.key_log = Arc::new(rustls::KeyLogFile::new());
 

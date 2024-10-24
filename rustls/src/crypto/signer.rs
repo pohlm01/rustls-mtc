@@ -86,7 +86,7 @@ pub trait Signer: Debug + Send + Sync {
     fn scheme(&self) -> SignatureScheme;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum CertifiedKey {
     X509 {
         /// The certificate chain.
@@ -100,7 +100,7 @@ pub enum CertifiedKey {
         ocsp: Option<Vec<u8>>,
     },
     Bikeshed {
-        cert: BikeshedCertificate<'static>,
+        cert: BikeshedCertificate,
         key: Arc<dyn SigningKey>,
     },
 }
@@ -186,7 +186,7 @@ impl CertifiedKey {
         }
     }
 
-    pub fn bikeshed_certificate(&self) -> Result<&BikeshedCertificate<'_>, Error> {
+    pub fn bikeshed_certificate(&self) -> Result<&BikeshedCertificate, Error> {
         match self {
             Self::X509 { .. } => Err(Error::WrongCertificateType),
             Self::Bikeshed { cert, .. } => Ok(cert),

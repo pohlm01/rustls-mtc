@@ -528,7 +528,10 @@ pub use crate::key_log_file::KeyLogFile;
 pub use crate::msgs::enums::NamedGroup;
 pub use crate::msgs::ffdhe_groups;
 pub use crate::msgs::handshake::DistinguishedName;
-pub use crate::msgs::{enums::CertificateType, handshake::TrustAnchorIdentifier};
+pub use crate::msgs::{
+    enums::CertificateType, handshake::BikeshedCertificate, handshake::Subject,
+    handshake::TLSSubjectInfo, handshake::TrustAnchorIdentifier,
+};
 #[cfg(feature = "std")]
 pub use crate::stream::{Stream, StreamOwned};
 pub use crate::suites::{
@@ -596,6 +599,7 @@ pub mod server {
     mod tls13;
 
     pub use builder::WantsServerCert;
+    pub use handy::AlwaysResolvesChain;
     pub use handy::NoServerSessionStorage;
     #[cfg(any(feature = "std", feature = "hashbrown"))]
     pub use handy::ResolvesServerCertUsingSni;

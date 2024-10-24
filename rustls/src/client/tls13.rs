@@ -70,7 +70,7 @@ pub(super) enum ServerCertDetails<'a> {
         ocsp_response: Vec<u8>,
     },
     Bikeshed {
-        cert: BikeshedCertificate<'a>,
+        cert: BikeshedCertificate,
     },
 }
 
@@ -82,7 +82,7 @@ impl<'a> ServerCertDetails<'a> {
         }
     }
 
-    pub(super) fn from_bikeshed(cert: BikeshedCertificate<'a>) -> Self {
+    pub(super) fn from_bikeshed(cert: BikeshedCertificate) -> Self {
         Self::Bikeshed { cert }
     }
 
@@ -91,7 +91,7 @@ impl<'a> ServerCertDetails<'a> {
             ServerCertDetails::X509 { cert_chain, .. } => {
                 X509orBikeshed::X509(cert_chain.into_owned())
             }
-            ServerCertDetails::Bikeshed { cert, .. } => X509orBikeshed::Bikeshed(cert.into_owned()),
+            ServerCertDetails::Bikeshed { cert, .. } => X509orBikeshed::Bikeshed(cert),
         }
     }
 
@@ -104,9 +104,7 @@ impl<'a> ServerCertDetails<'a> {
                 cert_chain: cert_chain.into_owned(),
                 ocsp_response,
             },
-            Self::Bikeshed { cert } => ServerCertDetails::Bikeshed {
-                cert: cert.into_owned(),
-            },
+            Self::Bikeshed { cert } => ServerCertDetails::Bikeshed { cert },
         }
     }
 }
@@ -1081,7 +1079,7 @@ impl State<ClientConnectionData> for ExpectCertificate {
             ));
         }
 
-        let server_cert = match cx.common.certificate_type {
+        let server_cert = match cx.common.server_certificate_type {
             CertificateType::X509 => {
                 let end_entity_ocsp = cert_payload.end_entity_ocsp();
                 ServerCertDetails::from_x509(

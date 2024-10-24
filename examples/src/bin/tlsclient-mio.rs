@@ -26,10 +26,11 @@ use std::{process, str};
 
 use clap::Parser;
 use mio::net::TcpStream;
+use rustls::client::WebPkiServerVerifier;
 use rustls::crypto::{aws_lc_rs as provider, CryptoProvider};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use rustls::{CertificateType, RootCertStore};
+use rustls::RootCertStore;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -333,10 +334,18 @@ fn load_private_key(filename: &str) -> PrivateKeyDer<'static> {
 }
 
 mod danger {
+    use mtc_verifier::{OsMtcRootStore, TaiRootStore};
     use pki_types::{CertificateDer, ServerName, UnixTime};
-    use rustls::client::danger::HandshakeSignatureValid;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
+    use rustls::client::WebPkiServerVerifier;
     use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
-    use rustls::DigitallySignedStruct;
+    use rustls::internal::msgs::codec::Codec;
+    use rustls::{
+        CertificateError, CertificateType, DigitallySignedStruct, Error, SignatureScheme, Subject,
+        TrustAnchorIdentifier,
+    };
+    use std::ops::Deref;
+    use std::sync::Arc;
 
     #[derive(Debug)]
     pub struct NoCertificateVerification(CryptoProvider);
@@ -393,6 +402,143 @@ mod danger {
                 .supported_schemes()
         }
     }
+
+    #[derive(Debug)]
+    pub struct MtcX509Verifier {
+        provider: CryptoProvider,
+        x509_verifier: Arc<WebPkiServerVerifier>,
+        tai_root_store: Box<dyn TaiRootStore + Send + Sync>,
+    }
+
+    impl MtcX509Verifier {
+        pub fn new(provider: CryptoProvider, x509_verifier: Arc<WebPkiServerVerifier>) -> Self {
+            Self {
+                provider,
+                x509_verifier,
+                tai_root_store: Box::new(OsMtcRootStore::from_disk("/etc/ssl/mtc/").unwrap()),
+            }
+        }
+    }
+
+    impl rustls::client::danger::ServerCertVerifier for MtcX509Verifier {
+        fn verify_server_cert(
+            &self,
+            end_entity: &CertificateDer<'_>,
+            intermediates: &[CertificateDer<'_>],
+            server_name: &ServerName<'_>,
+            ocsp_response: &[u8],
+            now: UnixTime,
+        ) -> Result<ServerCertVerified, Error> {
+            self.x509_verifier.verify_server_cert(
+                end_entity,
+                intermediates,
+                server_name,
+                ocsp_response,
+                now,
+            )
+        }
+
+        fn verify_server_mtc_cert(
+            &self,
+            server_name: &ServerName<'_>,
+            cert: &rustls::BikeshedCertificate,
+            now: UnixTime,
+        ) -> Result<ServerCertVerified, Error> {
+            match mtc_verifier::verify_cert(&cert.get_encoding(), self.tai_root_store.deref()) {
+                Ok(_) => Ok(ServerCertVerified::assertion()),
+                // TODO make sure we get the correct mapping for the certificate verification error
+                Err(_) => Err(Error::InvalidCertificate(
+                    CertificateError::ApplicationVerificationFailure,
+                )),
+            }
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            self.x509_verifier
+                .verify_tls12_signature(message, cert, dss)
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            self.x509_verifier
+                .verify_tls13_signature(message, cert, dss)
+        }
+
+        fn verify_tls13_signature_mtc(
+            &self,
+            message: &[u8],
+            cert: &rustls::BikeshedCertificate,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            let (alg, key) = match cert.subject() {
+                Subject::Tls(info) => (info.signature_scheme, info.public_key.0.as_slice()),
+                Subject::Unknown(_, _) => Err(Error::InvalidCertificate(
+                    CertificateError::ApplicationVerificationFailure,
+                ))?,
+            };
+
+            dbg!(alg);
+            dbg!(dss.scheme);
+            assert_eq!(alg, dss.scheme);
+
+            // TODO @max somehow, the alg encoded in the cert must be used as well
+            let alg = self
+                .provider
+                .signature_verification_algorithms
+                .convert_scheme(dss.scheme)?[0];
+
+            dbg!(alg);
+
+            alg.verify_signature(key, message, dss.signature())
+                .map(|_| HandshakeSignatureValid::assertion())
+                .map_err(|_| Error::General("Invalid handshake signature".to_string()))
+        }
+
+        /// In theory, the MTC verifier and X509 verifier can support a different set of signature schemes,
+        /// possibly with a different priority order.
+        /// For simplicity, we keep the priority order of the crypto provider
+        /// and filter out all algorithms that are not supported by the X509 verifier
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            self.provider
+                .signature_verification_algorithms
+                .supported_schemes()
+                .iter()
+                .filter(|s| {
+                    self.x509_verifier
+                        .supported_verify_schemes()
+                        .contains(*s)
+                })
+                .cloned()
+                .collect()
+        }
+
+        fn supported_cert_types(&self) -> &[CertificateType] {
+            &[CertificateType::Bikeshed, CertificateType::X509]
+        }
+
+        fn supported_trust_anchors(&self) -> Vec<TrustAnchorIdentifier> {
+            self.tai_root_store
+                .supported_tais()
+                .into_iter()
+                .map(Into::into)
+                .collect()
+        }
+    }
+
+    impl MtcX509Verifier {
+        fn update_tai_from_disk(&mut self) {
+            self.tai_root_store = Box::new(OsMtcRootStore::from_disk("/etc/ssl/mtc/").unwrap());
+        }
+    }
 }
 
 /// Build a `ClientConfig` from our arguments
@@ -434,7 +580,13 @@ fn make_config(args: &Args) -> Arc<rustls::ClientConfig> {
     )
     .with_protocol_versions(&versions)
     .expect("inconsistent cipher-suite/versions selected")
-    .with_root_certificates(root_store);
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(danger::MtcX509Verifier::new(
+        provider::default_provider(),
+        WebPkiServerVerifier::builder(Arc::new(root_store))
+            .build()
+            .unwrap(),
+    )));
 
     let mut config = match (&args.auth_key, &args.auth_certs) {
         (Some(key_file), Some(certs_file)) => {
@@ -476,13 +628,6 @@ fn make_config(args: &Args) -> Arc<rustls::ClientConfig> {
                 provider::default_provider(),
             )));
     }
-
-    config.trusted_trust_anchors = vec![
-        "62253.12.15.0".parse().unwrap(),
-        "62253.12.15.1".parse().unwrap(),
-    ];
-    config.supported_server_certificate_types =
-        vec![CertificateType::X509, CertificateType::Bikeshed];
 
     Arc::new(config)
 }

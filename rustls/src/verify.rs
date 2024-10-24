@@ -1,13 +1,13 @@
-use alloc::vec::Vec;
-use core::fmt::Debug;
-
 use crate::enums::SignatureScheme;
 use crate::error::{Error, InvalidMessage};
 use crate::msgs::base::PayloadU16;
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::handshake::{BikeshedCertificate, DistinguishedName};
-use crate::CertificateType;
+use crate::{CertificateError, CertificateType, TrustAnchorIdentifier};
+use alloc::vec::Vec;
+use core::fmt::Debug;
 use pki_types::{CertificateDer, ServerName, UnixTime};
+use std::vec;
 
 // Marker types.  These are used to bind the fact some verification
 // (certificate chain or handshake signature) has taken place into
@@ -90,11 +90,13 @@ pub trait ServerCertVerifier: Debug + Send + Sync {
 
     fn verify_server_mtc_cert(
         &self,
-        server_name: &ServerName<'_>,
-        cert: &BikeshedCertificate<'_>,
-        now: UnixTime,
+        _server_name: &ServerName<'_>,
+        _cert: &BikeshedCertificate,
+        _now: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
-        unimplemented!()
+        Err(Error::InvalidCertificate(
+            CertificateError::UnsupportedCertificateType,
+        ))
     }
 
     /// Verify a signature allegedly by the given server certificate.
@@ -142,11 +144,13 @@ pub trait ServerCertVerifier: Debug + Send + Sync {
 
     fn verify_tls13_signature_mtc(
         &self,
-        message: &[u8],
-        cert: &BikeshedCertificate<'_>,
-        dss: &DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &BikeshedCertificate,
+        _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        unimplemented!()
+        Err(Error::InvalidCertificate(
+            CertificateError::UnsupportedCertificateType,
+        ))
     }
 
     /// Return the list of SignatureSchemes that this verifier will handle,
@@ -155,14 +159,17 @@ pub trait ServerCertVerifier: Debug + Send + Sync {
     /// This should be in priority order, with the most preferred first.
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme>;
 
-    /// Returns whether this verifier requires raw public keys as defined
-    /// in [RFC 7250](https://tools.ietf.org/html/rfc7250).
-    fn requires_raw_public_keys(&self) -> bool {
-        false
-    }
-
+    /// Returns a list of supported [`CertificateType`] in preference order
     fn supported_cert_types(&self) -> &[CertificateType] {
         &[CertificateType::X509]
+    }
+
+    /// List of supported TrustAnchorIdentifiers (TAI)
+    /// as specified by https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01.
+    /// For now, the full list will be sent to the server in the ClientHello handshake message.
+    /// Later implementations should reduce the set of TAIs based on the DNS record.
+    fn supported_trust_anchors(&self) -> Vec<TrustAnchorIdentifier> {
+        vec![]
     }
 }
 
@@ -278,10 +285,16 @@ pub trait ClientCertVerifier: Debug + Send + Sync {
     /// This should be in priority order, with the most preferred first.
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme>;
 
-    /// Returns whether this verifier requires raw public keys as defined
-    /// in [RFC 7250](https://tools.ietf.org/html/rfc7250).
-    fn requires_raw_public_keys(&self) -> bool {
-        false
+    /// Returns a list of supported [`CertificateType`] in preference order
+    fn supported_cert_types(&self) -> &[CertificateType] {
+        &[CertificateType::X509]
+    }
+
+    /// List of supported TrustAnchorIdentifiers
+    /// as specified by https://datatracker.ietf.org/doc/html/draft-beck-tls-trust-anchor-ids-01.
+    /// This list will be sent to the client in the CertificateRequest handshake message
+    fn supported_trust_anchors(&self) -> &[TrustAnchorIdentifier] {
+        &[]
     }
 }
 

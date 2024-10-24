@@ -8,7 +8,6 @@ use core::num::ParseIntError;
 use core::ops::Deref;
 use core::str::FromStr;
 use core::{fmt, iter};
-use log::trace;
 use pki_types::{CertificateDer, DnsName};
 
 #[cfg(feature = "tls12")]
@@ -27,7 +26,7 @@ use crate::msgs::codec::{self, Codec, LengthPrefixedBuffer, ListLength, Reader, 
 use crate::msgs::enums::{
     CertificateStatusType, CertificateType, ClientCertificateType, Compression, ECCurveType,
     ECPointFormat, EchVersion, ExtensionType, HpkeAead, HpkeKdf, HpkeKem, KeyUpdateRequest,
-    NamedGroup, PSKKeyExchangeMode, ServerNameType,
+    NamedGroup, PSKKeyExchangeMode, ServerNameType, SubjectType,
 };
 use crate::rand;
 use crate::verify::DigitallySignedStruct;
@@ -912,6 +911,10 @@ impl TlsListElement for ExtensionType {
     const SIZE_LEN: ListLength = ListLength::U8;
 }
 
+impl TlsListElement for TrustAnchorIdentifier {
+    const SIZE_LEN: ListLength = ListLength::U16;
+}
+
 impl ClientHelloPayload {
     pub(crate) fn ech_inner_encoding(&self, to_compress: Vec<ExtensionType>) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -1225,27 +1228,114 @@ impl<T: IntoIterator<Item = u32>> From<T> for TrustAnchorIdentifier {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct BikeshedCertificate<'a>(pub(crate) PayloadU24<'a>);
-
-impl BikeshedCertificate<'_> {
-    pub(crate) fn into_owned(self) -> BikeshedCertificate<'static> {
-        BikeshedCertificate(self.0.into_owned())
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub struct BikeshedCertificate {
+    assertion: Assertion,
+    proof: Proof,
 }
 
-impl<'a> Codec<'a> for BikeshedCertificate<'a> {
+impl Codec<'_> for BikeshedCertificate {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.0.encode(bytes)
+        self.assertion.encode(bytes);
+        self.proof.encode(bytes);
     }
 
-    fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
-        Ok(Self(PayloadU24::read(r)?))
+    fn read(r: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        Ok(Self {
+            assertion: Assertion::read(r)?,
+            proof: Proof::read(r)?,
+        })
     }
 }
 
-impl TlsListElement for TrustAnchorIdentifier {
-    const SIZE_LEN: ListLength = ListLength::U16;
+impl BikeshedCertificate {
+    pub fn tai(&self) -> TrustAnchorIdentifier {
+        self.proof
+            .trust_anchor_identifier
+            .clone()
+    }
+
+    pub fn subject(&self) -> &Subject {
+        &self.assertion.subject
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assertion {
+    subject: Subject,
+    claims: PayloadU16,
+}
+
+impl Codec<'_> for Assertion {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        let (subject_type, subject_info) = match &self.subject {
+            Subject::Tls(info) => (SubjectType::Tls, PayloadU16(info.get_encoding())),
+            Subject::Unknown(ident, info) => (SubjectType::Unknown(*ident), info.clone()),
+        };
+        subject_type.encode(bytes);
+        subject_info.encode(bytes);
+        self.claims.encode(bytes);
+    }
+
+    fn read(r: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        let subject_type = SubjectType::read(r)?;
+        let subject_info = PayloadU16::read(r)?;
+        let subject = match subject_type {
+            SubjectType::Tls => Subject::Tls(TLSSubjectInfo::read_bytes(&subject_info.0)?),
+            SubjectType::Unknown(ident) => Subject::Unknown(ident, subject_info),
+        };
+        Ok(Self {
+            subject,
+            claims: PayloadU16::read(r)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TLSSubjectInfo {
+    pub signature_scheme: SignatureScheme,
+    pub public_key: PayloadU16,
+}
+
+impl Codec<'_> for TLSSubjectInfo {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.signature_scheme.encode(bytes);
+        self.public_key.encode(bytes);
+    }
+
+    fn read(r: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        Ok(Self {
+            signature_scheme: SignatureScheme::read(r)?,
+            public_key: PayloadU16::read(r)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Subject {
+    Tls(TLSSubjectInfo),
+    Unknown(u16, PayloadU16),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Proof {
+    trust_anchor_identifier: TrustAnchorIdentifier,
+    proof_data: PayloadU16,
+}
+
+impl Codec<'_> for Proof {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.trust_anchor_identifier
+            .encode(bytes);
+        self.proof_data.encode(bytes);
+    }
+
+    fn read(r: &mut Reader<'_>) -> Result<Self, InvalidMessage> {
+        Ok(Self {
+            trust_anchor_identifier: TrustAnchorIdentifier::read(r)?,
+            proof_data: PayloadU16::read(r)?,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1810,10 +1900,10 @@ impl<'a> CertificatePayloadTls13<'a> {
     }
 
     pub(crate) fn from_bikeshed_certificate(
-        cert: BikeshedCertificate<'a>,
+        cert: BikeshedCertificate,
         matches_requested_trust_anchors: bool,
     ) -> Self {
-        let mut entry = CertificateEntry::new(cert.0);
+        let mut entry = CertificateEntry::new(PayloadU24(Payload::Owned(cert.get_encoding())));
         if matches_requested_trust_anchors {
             entry
                 .exts
@@ -1891,9 +1981,11 @@ impl<'a> CertificatePayloadTls13<'a> {
         )
     }
 
-    pub(crate) fn into_bikeshed_certificate(mut self) -> BikeshedCertificate<'a> {
+    // TODO @max proper error handling
+    pub(crate) fn into_bikeshed_certificate(mut self) -> BikeshedCertificate {
         assert_eq!(self.entries.len(), 1);
-        BikeshedCertificate(self.entries.remove(0).cert)
+        let data = self.entries.remove(0).cert;
+        BikeshedCertificate::read_bytes(data.0.bytes()).unwrap()
     }
 }
 

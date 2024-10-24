@@ -383,6 +383,8 @@ pub enum CertificateError {
     /// reasons.
     ApplicationVerificationFailure,
 
+    UnsupportedCertificateType,
+
     /// Any other error.
     ///
     /// This can be used by custom verifiers to expose the underlying error
@@ -436,6 +438,7 @@ impl From<CertificateError> for AlertDescription {
             BadSignature => Self::DecryptError,
             InvalidPurpose => Self::UnsupportedCertificate,
             ApplicationVerificationFailure => Self::AccessDenied,
+            UnsupportedCertificateType => Self::CertificateUnknown,
             // RFC 5246/RFC 8446
             // certificate_unknown
             //  Some other (unspecified) issue arose in processing the

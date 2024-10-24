@@ -17,7 +17,6 @@ use crate::enums::{CipherSuite, ProtocolVersion, SignatureScheme};
 use crate::error::Error;
 use crate::log::trace;
 use crate::msgs::enums::{CertificateType, NamedGroup};
-use crate::msgs::handshake::{ClientExtension, TrustAnchorIdentifier};
 use crate::msgs::persist;
 use crate::suites::SupportedCipherSuite;
 #[cfg(feature = "std")]
@@ -268,12 +267,6 @@ pub struct ClientConfig {
 
     /// How to offer Encrypted Client Hello (ECH). The default is to not offer ECH.
     pub(super) ech_mode: Option<EchMode>,
-
-    pub supported_server_certificate_types: Vec<CertificateType>,
-
-    pub supported_client_certificate_types: Vec<CertificateType>,
-
-    pub trusted_trust_anchors: Vec<TrustAnchorIdentifier>,
 }
 
 impl ClientConfig {
@@ -811,6 +804,7 @@ mod connection {
         }
     }
 }
+use crate::msgs::handshake::ClientExtension;
 #[cfg(feature = "std")]
 pub use connection::{ClientConnection, WriteEarlyData};
 

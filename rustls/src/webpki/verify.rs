@@ -1,15 +1,14 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use pki_types::{
-    CertificateDer, ServerName, SignatureVerificationAlgorithm, SubjectPublicKeyInfoDer, UnixTime,
-};
-
 use super::anchors::RootCertStore;
 use super::pki_error;
 use crate::enums::SignatureScheme;
 use crate::error::{Error, PeerMisbehaved};
 use crate::verify::{DigitallySignedStruct, HandshakeSignatureValid};
+use pki_types::{
+    CertificateDer, ServerName, SignatureVerificationAlgorithm, SubjectPublicKeyInfoDer, UnixTime,
+};
 
 /// Verify that the end-entity certificate `end_entity` is a valid server cert
 /// and chains to at least one of the trust anchors in the `roots` [RootCertStore].
@@ -92,7 +91,7 @@ impl WebPkiSupportedAlgorithms {
     }
 
     /// Return the first item in `mapping` that matches `scheme`.
-    fn convert_scheme(
+    pub fn convert_scheme(
         &self,
         scheme: SignatureScheme,
     ) -> Result<&[&'static dyn SignatureVerificationAlgorithm], Error> {

@@ -345,30 +345,41 @@ fn emit_client_hello_for_retry(
 
     if support_tls13 {
         if config
-            .supported_client_certificate_types
+            .client_auth_cert_resolver
+            .supported_cert_types()
             .iter()
             .any(|t| !matches!(t, CertificateType::X509))
         {
             exts.push(ClientExtension::ClientCertTypes(
                 config
-                    .supported_client_certificate_types
-                    .clone(),
+                    .client_auth_cert_resolver
+                    .supported_cert_types()
+                    .to_vec(),
             ));
         }
         if config
-            .supported_server_certificate_types
+            .verifier
+            .supported_cert_types()
             .iter()
             .any(|t| !matches!(t, CertificateType::X509))
         {
             exts.push(ClientExtension::ServerCertTypes(
                 config
-                    .supported_server_certificate_types
-                    .clone(),
+                    .verifier
+                    .supported_cert_types()
+                    .to_vec(),
             ));
         }
-        if !config.trusted_trust_anchors.is_empty() {
+        if !config
+            .verifier
+            .supported_trust_anchors()
+            .is_empty()
+        {
             exts.push(ClientExtension::TrustAnchors(
-                config.trusted_trust_anchors.clone(),
+                config
+                    .verifier
+                    .supported_trust_anchors()
+                    .to_vec(),
             ))
         }
     }
@@ -698,7 +709,15 @@ pub(super) fn process_server_cert_type_extension(
         CertificateTypeNegotiationResult::Err(err) => {
             Err(common.send_fatal_alert(AlertDescription::HandshakeFailure, err))
         }
-        _ => Ok(()),
+        CertificateTypeNegotiationResult::Negotiated(
+            ExtensionType::ServerCertificateType,
+            cert_type,
+        ) => {
+            common.server_certificate_type = cert_type;
+            Ok(())
+        }
+        CertificateTypeNegotiationResult::NotNegotiated => Ok(()),
+        _ => unreachable!(),
     }
 }
 
@@ -718,7 +737,16 @@ pub(super) fn process_client_cert_type_extension(
         CertificateTypeNegotiationResult::Err(err) => {
             Err(common.send_fatal_alert(AlertDescription::HandshakeFailure, err))
         }
-        _ => Ok(()),
+        CertificateTypeNegotiationResult::Negotiated(
+            ExtensionType::ClientCertificateType,
+            cert_type,
+        ) => {
+            // TODO @max
+            unimplemented!();
+            Ok(())
+        }
+        CertificateTypeNegotiationResult::NotNegotiated => Ok(()),
+        _ => unreachable!(),
     }
 }
 

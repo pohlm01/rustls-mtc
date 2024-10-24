@@ -123,9 +123,9 @@ pub trait ResolvesServerCert: Debug + Send + Sync {
     /// Return `None` to abort the handshake.
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>>;
 
-    /// Return true when the server only supports raw public keys.
-    fn only_raw_public_keys(&self) -> bool {
-        false
+    /// Certificate types the server supports
+    fn supported_cert_types(&self) -> &[CertificateType] {
+        &[CertificateType::X509]
     }
 }
 
@@ -408,8 +408,6 @@ pub struct ServerConfig {
     ///
     /// [RFC8779]: https://datatracker.ietf.org/doc/rfc8879/
     pub cert_decompressors: Vec<&'static dyn compress::CertDecompressor>,
-
-    pub supported_server_certificate_types: Vec<CertificateType>,
 }
 
 impl ServerConfig {

@@ -165,6 +165,15 @@ enum_builder! {
 }
 
 enum_builder! {
+    /// Subject type in the assertion of a Bikeshed certificate
+    /// See https://datatracker.ietf.org/doc/html/draft-davidben-tls-merkle-tree-certs-03#section-4
+    @U16
+    pub enum SubjectType {
+        Tls => 0x00,
+    }
+}
+
+enum_builder! {
     /// The `ServerNameType` TLS protocol enum.  Values in this enum are taken
     /// from the various RFCs covering TLS, and are listed by IANA.
     /// The `Unknown` item is used when processing unrecognised ordinals.

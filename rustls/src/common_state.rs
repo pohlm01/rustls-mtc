@@ -28,7 +28,7 @@ use pki_types::CertificateDer;
 #[derive(Debug, Clone)]
 pub enum X509orBikeshed<'a> {
     X509(CertificateChain<'a>),
-    Bikeshed(BikeshedCertificate<'a>),
+    Bikeshed(BikeshedCertificate),
 }
 
 impl<'a> From<Vec<CertificateDer<'a>>> for X509orBikeshed<'a> {
@@ -37,8 +37,8 @@ impl<'a> From<Vec<CertificateDer<'a>>> for X509orBikeshed<'a> {
     }
 }
 
-impl<'a> From<BikeshedCertificate<'a>> for X509orBikeshed<'a> {
-    fn from(cert: BikeshedCertificate<'a>) -> Self {
+impl<'a> From<BikeshedCertificate> for X509orBikeshed<'a> {
+    fn from(cert: BikeshedCertificate) -> Self {
         Self::Bikeshed(cert)
     }
 }
@@ -55,7 +55,7 @@ impl PartialEq for X509orBikeshed<'_> {
             }
             Self::Bikeshed(data) => {
                 if let Self::Bikeshed(other) = other {
-                    data.0 == other.0
+                    data == other
                 } else {
                     false
                 }
@@ -82,9 +82,7 @@ impl<'a> Codec<'a> for X509orBikeshed<'a> {
         let cert_type = u8::read(reader)?;
         match cert_type {
             0 => Ok(Self::X509(CertificateChain::read(reader)?.into_owned())),
-            1 => Ok(Self::Bikeshed(
-                BikeshedCertificate::read(reader)?.into_owned(),
-            )),
+            1 => Ok(Self::Bikeshed(BikeshedCertificate::read(reader)?)),
             _ => Err(InvalidMessage::InvalidContentType),
         }
     }
@@ -94,7 +92,7 @@ impl X509orBikeshed<'_> {
     pub(crate) fn into_owned(self) -> X509orBikeshed<'static> {
         match self {
             Self::X509(x) => X509orBikeshed::X509(x.into_owned()),
-            Self::Bikeshed(b) => X509orBikeshed::Bikeshed(b.into_owned()),
+            Self::Bikeshed(b) => X509orBikeshed::Bikeshed(b),
         }
     }
 }
@@ -129,7 +127,7 @@ pub struct CommonState {
     pub(crate) sendable_tls: ChunkVecBuffer,
     queued_key_update_message: Option<Vec<u8>>,
 
-    pub(crate) certificate_type: CertificateType,
+    pub(crate) server_certificate_type: CertificateType,
 
     /// Protocol whose key schedule should be used. Unused for TLS < 1.3.
     pub(crate) protocol: Protocol,
@@ -162,7 +160,7 @@ impl CommonState {
             received_plaintext: ChunkVecBuffer::new(Some(DEFAULT_RECEIVED_PLAINTEXT_LIMIT)),
             sendable_tls: ChunkVecBuffer::new(Some(DEFAULT_BUFFER_LIMIT)),
             queued_key_update_message: None,
-            certificate_type: CertificateType::X509,
+            server_certificate_type: CertificateType::X509,
             protocol: Protocol::Tcp,
             quic: quic::Quic::default(),
             enable_secret_extraction: false,
