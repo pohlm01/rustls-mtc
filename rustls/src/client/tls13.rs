@@ -1132,7 +1132,7 @@ impl From<mtc_verifier::SignatureScheme> for SignatureScheme {
             mtc_verifier::SignatureScheme::ED25519 => Self::ED25519,
             mtc_verifier::SignatureScheme::ED448 => Self::ED448,
             mtc_verifier::SignatureScheme::Unknown(v) => Self::Unknown(v),
-            mtc_verifier::SignatureScheme::MlDsa44 => Self::Unknown(0xfe3c)
+            mtc_verifier::SignatureScheme::MlDsa87 => Self::Unknown(0x0906)
         }
     }
 }
