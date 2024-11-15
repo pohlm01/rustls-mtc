@@ -444,8 +444,9 @@ mod danger {
             cert: &rustls::BikeshedCertificate,
             now: UnixTime,
         ) -> Result<ServerCertVerified, Error> {
-            match mtc_verifier::verify_cert(&cert.get_encoding(), self.tai_root_store.deref()) {
+            match mtc_verifier::verify_cert(&cert.get_encoding(), now, self.tai_root_store.deref()) {
                 Ok(_) => Ok(ServerCertVerified::assertion()),
+                Err(mtc_verifier::Error::Expired) => Err(Error::InvalidCertificate(CertificateError::Expired)),
                 // TODO make sure we get the correct mapping for the certificate verification error
                 Err(_) => Err(Error::InvalidCertificate(
                     CertificateError::ApplicationVerificationFailure,

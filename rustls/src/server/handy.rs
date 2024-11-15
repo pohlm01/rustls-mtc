@@ -343,7 +343,7 @@ mod tai_resolver {
     use crate::{server, sign, BikeshedCertificate, Error, TrustAnchorIdentifier};
     use alloc::vec::Vec;
     use core::fmt::Debug;
-    use log::warn;
+    use log::{trace, warn};
     use pki_types::pem::PemObject;
     use pki_types::PrivateKeyDer;
     use std::collections::HashMap;
@@ -381,53 +381,69 @@ mod tai_resolver {
             res
         }
 
-        pub fn load_bikeshed_certs_from_disk(&mut self) {
-            let files = match fs::read_dir(&self.mtc_dir) {
-                Ok(files) => files,
+        fn load_bikeshed_certs_from_disk(&mut self) {
+            let ca_dirs = match fs::read_dir(&self.mtc_dir) {
+                Ok(ca_dirs) => ca_dirs,
                 Err(err) => {
                     warn!("Could not update Bikeshed certificates: {err}");
                     return;
                 }
-            };
+            }.collect::<Vec<_>>();
+            
+            for ca_dir in ca_dirs.into_iter().flatten() {
+                if let Ok(metadata) = ca_dir.metadata() {
+                    if metadata.is_dir() {
 
-            let mut certs = vec![];
-            let mut private_key = None;
+                        let files = match fs::read_dir(ca_dir.path()) {
+                            Ok(files) => files,
+                            Err(err) => {
+                                warn!("Could not update Bikeshed certificates: {err}");
+                                return;
+                            }
+                        };
+                        
+                        let mut certs = vec![];
+                        let mut private_key = None;
 
-            for file in files.filter(Result::is_ok) {
-                // This `unwrap` is safe as all `Err` values have been filtered in the `for` loop
-                let path = file.unwrap().path();
-                if let Some(file) = read_file(&path) {
-                    match file {
-                        Cert(c) => certs.push(c),
-                        CaParams(_) => {}
-                        PrivateKey(k) => {
-                            if private_key.is_some() {
-                                warn!("Duplicate private key found");
-                            } else {
-                                private_key = Some(k);
+                        for file in files.filter(Result::is_ok) {
+                            // This `unwrap` is safe as all `Err` values have been filtered in the `for` loop
+                            let path = file.unwrap().path();
+                            if let Some(file) = read_file(&path) {
+                                match file {
+                                    Cert(c) => certs.push(c),
+                                    CaParams(_) => {}
+                                    PrivateKey(k) => {
+                                        if private_key.is_some() {
+                                            warn!("Duplicate private key found");
+                                        } else {
+                                            private_key = Some(k);
+                                        }
+                                    }
+                                }
                             }
                         }
+
+                        assert!(private_key.is_some());
+                        let key = self
+                            .crypto_provider
+                            .key_provider
+                            .load_private_key(private_key.unwrap())
+                            .unwrap();
+
+                        self.by_tai
+                            .extend(certs.into_iter().map(|cert| {
+                                trace!("loaded MTC cert with TAI {:?} from disk", cert.tai());
+                                (
+                                    cert.tai(),
+                                    Arc::new(CertifiedKey::Bikeshed {
+                                        cert,
+                                        key: Arc::clone(&key),
+                                    }),
+                                )
+                            }));
                     }
                 }
             }
-
-            assert!(private_key.is_some());
-            let key = self
-                .crypto_provider
-                .key_provider
-                .load_private_key(private_key.unwrap())
-                .unwrap();
-
-            self.by_tai
-                .extend(certs.into_iter().map(|cert| {
-                    (
-                        dbg!(cert.tai()),
-                        Arc::new(CertifiedKey::Bikeshed {
-                            cert,
-                            key: Arc::clone(&key),
-                        }),
-                    )
-                }));
         }
 
         /// Add a new [`CertifiedKey`] to be used for the given TAI.
@@ -472,7 +488,7 @@ mod tai_resolver {
         fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
             if let Some(tais) = client_hello.supported_trust_anchors() {
                 for tai in tais {
-                    if let Some(cert) = self.by_tai.get(dbg!(tai)) {
+                    if let Some(cert) = self.by_tai.get(tai) {
                         return Some(Arc::clone(cert));
                     }
                 }
