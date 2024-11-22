@@ -131,6 +131,7 @@ mod client_hello {
             mut self,
             cx: &mut ServerContext<'_>,
             server_key: ActiveCertifiedKey<'_>,
+            tai_based: bool,
             chm: &Message<'_>,
             client_hello: &ClientHelloPayload,
             selected_kxg: &'static dyn SupportedKxGroup,
@@ -372,16 +373,15 @@ mod client_hello {
 
             let doing_client_auth = if full_handshake {
                 let client_auth = emit_certificate_req_tls13(&mut flight, &self.config)?;
-
-                // TODO @max set the `matches_requested_trust_anchors` to a meaningful values
+                
                 let payload = match server_key.get_cert() {
                     Certificate::X509(cert) => CertificatePayloadTls13::from_x509_certificates(
                         cert.iter(),
                         ocsp_response,
-                        false,
+                        tai_based,
                     ),
                     Certificate::Bikeshed(cert) => {
-                        CertificatePayloadTls13::from_bikeshed_certificate(cert.clone(), false)
+                        CertificatePayloadTls13::from_bikeshed_certificate(cert.clone(), tai_based)
                     }
                 };
                 if let Some(compressor) = cert_compressor {

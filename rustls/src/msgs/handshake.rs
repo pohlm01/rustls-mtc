@@ -1684,7 +1684,7 @@ pub(crate) enum CertificateExtension<'a> {
     CertificateStatus(CertificateStatus<'a>),
     // TODO @max this is based on https://datatracker.ietf.org/doc/html/draft-davidben-tls-merkle-tree-certs-03#appendix-B.1
     ClientCertificateType(CertificateType),
-    TrustAnchors(Vec<TrustAnchorIdentifier>),
+    TrustAnchors,
     Unknown(UnknownExtension),
 }
 
@@ -1693,7 +1693,7 @@ impl<'a> CertificateExtension<'a> {
         match *self {
             Self::CertificateStatus(_) => ExtensionType::StatusRequest,
             Self::ClientCertificateType(_) => ExtensionType::ServerCertificateType,
-            Self::TrustAnchors(_) => ExtensionType::TrustAnchors,
+            Self::TrustAnchors => ExtensionType::TrustAnchors,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -1709,7 +1709,7 @@ impl<'a> CertificateExtension<'a> {
         match self {
             Self::CertificateStatus(st) => CertificateExtension::CertificateStatus(st.into_owned()),
             Self::ClientCertificateType(sct) => CertificateExtension::ClientCertificateType(sct),
-            Self::TrustAnchors(tai) => CertificateExtension::TrustAnchors(tai),
+            Self::TrustAnchors => CertificateExtension::TrustAnchors,
             Self::Unknown(unk) => CertificateExtension::Unknown(unk),
         }
     }
@@ -1723,7 +1723,7 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
         match *self {
             Self::CertificateStatus(ref r) => r.encode(nested.buf),
             Self::ClientCertificateType(r) => r.encode(nested.buf),
-            Self::TrustAnchors(ref r) => r.encode(nested.buf),
+            Self::TrustAnchors => {},
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -1743,8 +1743,7 @@ impl<'a> Codec<'a> for CertificateExtension<'a> {
                 Self::ClientCertificateType(sct)
             }
             ExtensionType::TrustAnchors => {
-                let tai = Vec::<TrustAnchorIdentifier>::read(&mut sub)?;
-                Self::TrustAnchors(tai)
+                Self::TrustAnchors
             }
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
@@ -1818,14 +1817,14 @@ impl<'a> CertificateEntry<'a> {
             .and_then(CertificateExtension::cert_status)
     }
 
-    pub(crate) fn trust_anchor_ext(&self) -> Option<&[TrustAnchorIdentifier]> {
-        self.exts
-            .first()
-            .and_then(|ext| match ext {
-                CertificateExtension::TrustAnchors(tai) => Some(tai.as_slice()),
-                _ => None,
-            })
-    }
+    // pub(crate) fn trust_anchor_ext(&self) -> Option<&[TrustAnchorIdentifier]> {
+    //     self.exts
+    //         .first()
+    //         .and_then(|ext| match ext {
+    //             CertificateExtension::TrustAnchors(tai) => Some(tai.as_slice()),
+    //             _ => None,
+    //         })
+    // }
 }
 
 impl<'a> TlsListElement for CertificateEntry<'a> {
@@ -1889,7 +1888,7 @@ impl<'a> CertificatePayloadTls13<'a> {
                 .for_each(|entry| {
                     entry
                         .exts
-                        .push(CertificateExtension::TrustAnchors(Vec::new()))
+                        .push(CertificateExtension::TrustAnchors)
                 });
         };
 
@@ -1907,9 +1906,9 @@ impl<'a> CertificatePayloadTls13<'a> {
         if matches_requested_trust_anchors {
             entry
                 .exts
-                .push(CertificateExtension::TrustAnchors(Vec::new()));
+                .push(CertificateExtension::TrustAnchors);
         }
-
+        // dbg!(&entry);
         Self {
             context: PayloadU8::empty(),
             entries: vec![entry],

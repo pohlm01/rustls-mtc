@@ -466,14 +466,14 @@ struct FixedSignatureSchemeServerCertResolver {
 }
 
 impl server::ResolvesServerCert for FixedSignatureSchemeServerCertResolver {
-    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<sign::CertifiedKey>> {
-        let mut certkey = self.resolver.resolve(client_hello)?;
+    fn resolve(&self, client_hello: ClientHello) -> Option<(Arc<sign::CertifiedKey>, bool)> {
+        let (mut certkey, tai_based) = self.resolver.resolve(client_hello)?;
         let key = certkey.to_key();
         Arc::make_mut(&mut certkey).set_key(Arc::new(FixedSignatureSchemeSigningKey {
             key,
             scheme: self.scheme,
         }));
-        Some(certkey)
+        Some((certkey, tai_based))
     }
 }
 

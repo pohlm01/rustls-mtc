@@ -444,7 +444,7 @@ mod danger {
             cert: &rustls::BikeshedCertificate,
             now: UnixTime,
         ) -> Result<ServerCertVerified, Error> {
-            match mtc_verifier::verify_cert(&cert.get_encoding(), now, self.tai_root_store.deref()) {
+            match mtc_verifier::verify_cert(&cert.get_encoding(), now, self.tai_root_store.deref(), &server_name.to_str()) {
                 Ok(_) => Ok(ServerCertVerified::assertion()),
                 Err(mtc_verifier::Error::Expired) => Err(Error::InvalidCertificate(CertificateError::Expired)),
                 // TODO make sure we get the correct mapping for the certificate verification error
@@ -668,7 +668,7 @@ fn main() {
 
     if args.http {
         let httpreq = format!(
-            "GET / HTTP/1.0\r\nHost: {}\r\nConnection: \
+            "GET /hello-mtc-world HTTP/1.0\r\nHost: {}\r\nConnection: \
                                close\r\nAccept-Encoding: identity\r\n\r\n",
             args.hostname
         );

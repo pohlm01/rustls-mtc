@@ -194,8 +194,8 @@ impl AlwaysResolvesChain {
 }
 
 impl server::ResolvesServerCert for AlwaysResolvesChain {
-    fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
-        Some(Arc::clone(&self.0))
+    fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<(Arc<sign::CertifiedKey>, bool)> {
+        Some((Arc::clone(&self.0), false))
     }
 }
 
@@ -214,8 +214,8 @@ impl AlwaysResolvesServerRawPublicKeys {
 }
 
 impl server::ResolvesServerCert for AlwaysResolvesServerRawPublicKeys {
-    fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
-        Some(Arc::clone(&self.0))
+    fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<(Arc<sign::CertifiedKey>, bool)> {
+        Some((Arc::clone(&self.0), false))
     }
 
     fn supported_cert_types(&self) -> &[CertificateType] {
@@ -287,9 +287,9 @@ mod sni_resolver {
     }
 
     impl server::ResolvesServerCert for ResolvesServerCertUsingSni {
-        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
+        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<(Arc<sign::CertifiedKey>, bool)> {
             if let Some(name) = client_hello.server_name() {
-                self.by_name.get(name).cloned()
+                self.by_name.get(name).cloned().map(|ck| {(ck, false)})
             } else {
                 // This kind of resolver requires SNI
                 None
@@ -485,11 +485,11 @@ mod tai_resolver {
     }
 
     impl server::ResolvesServerCert for ResolvesServerCertUsingTaiWithFallback {
-        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        fn resolve(&self, client_hello: ClientHello<'_>) -> Option<(Arc<CertifiedKey>, bool)> {
             if let Some(tais) = client_hello.supported_trust_anchors() {
                 for tai in tais {
                     if let Some(cert) = self.by_tai.get(tai) {
-                        return Some(Arc::clone(cert));
+                        return Some((Arc::clone(cert), true));
                     }
                 }
             };

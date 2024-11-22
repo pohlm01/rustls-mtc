@@ -119,9 +119,10 @@ pub trait ProducesTickets: Debug + Send + Sync {
 pub trait ResolvesServerCert: Debug + Send + Sync {
     /// Choose a certificate chain and matching key given simplified
     /// ClientHello information.
+    /// The returned bool signals if the match is based on the TAI provided in the client hello.
     ///
     /// Return `None` to abort the handshake.
-    fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>>;
+    fn resolve(&self, client_hello: ClientHello<'_>) -> Option<(Arc<sign::CertifiedKey>, bool)>;
 
     /// Certificate types the server supports
     fn supported_cert_types(&self) -> &[CertificateType] {

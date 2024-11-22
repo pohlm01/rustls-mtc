@@ -316,7 +316,7 @@ impl ExpectClientHello {
         let trust_anchors = client_hello.trust_anchors_extension();
 
         // Choose a certificate.
-        let certkey = {
+        let (certkey, tai_based) = {
             let client_hello = ClientHello::new(
                 &cx.data.sni,
                 &sig_schemes,
@@ -392,7 +392,7 @@ impl ExpectClientHello {
                 send_tickets: self.send_tickets,
                 extra_exts: self.extra_exts,
             }
-            .handle_client_hello(cx, certkey, m, client_hello, skxg, sig_schemes),
+            .handle_client_hello(cx, certkey, tai_based, m, client_hello, skxg, sig_schemes),
             #[cfg(feature = "tls12")]
             SupportedCipherSuite::Tls12(suite) => tls12::CompleteClientHelloHandling {
                 config: self.config,
